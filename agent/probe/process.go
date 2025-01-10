@@ -11,7 +11,6 @@ import (
 
 	log "github.com/sirupsen/logrus"
 
-	"github.com/neuvector/neuvector/agent/probe/ringbuffer"
 	"github.com/neuvector/neuvector/share"
 	"github.com/neuvector/neuvector/share/fsmon"
 	"github.com/neuvector/neuvector/share/global"
@@ -398,11 +397,10 @@ func (p *Probe) GetContainerProcHistory(id string) []*share.CLUSProcess {
 	p.lockProcMux()
 	defer p.unlockProcMux()
 
-	if r, ok := p.procHistoryMap[id]; ok {
-		history := r.DumpExt()
+	if history, ok := p.procHistoryMap[id]; ok {
 		procs := make([]*share.CLUSProcess, len(history))
 		for i, proc := range history {
-			procs[i] = p.proc2CLUS(proc.(*procInternal))
+			procs[i] = p.proc2CLUS(proc)
 		}
 		return procs
 	} else {
@@ -472,9 +470,7 @@ func (p *Probe) addContainer(id string, proc *procInternal, scanMode bool) {
 	}
 
 	p.containerMap[id] = c
-	if _, ok := p.pidContainerMap[pid]; ok {
-		delete(p.pidContainerMap, pid) // update
-	}
+	delete(p.pidContainerMap, pid) // update
 	p.pidContainerMap[pid] = c
 	p.resetIoNodes = true // JW
 
@@ -623,6 +619,7 @@ func (p *Probe) isEnforcerChildren(proc *procInternal, id string) bool {
 	return false
 }
 
+/* removed by golint
 func (p *Probe) evaluateRuncTrigger(id string, proc *procInternal) {
 	if id == "" {
 		if strings.HasSuffix(proc.path, "/runc") {
@@ -659,6 +656,7 @@ func (p *Probe) evaluateRuncTrigger(id string, proc *procInternal) {
 		}
 	}
 }
+*/
 
 func (p *Probe) evaluateRuntimeCmd(proc *procInternal) bool {
 	if global.RT.IsRuntimeProcess(filepath.Base(proc.ppath), nil) {
@@ -724,18 +722,6 @@ func (p *Probe) printProcReport(id string, proc *procInternal) {
 	//	p.sleepTestCounter(proc, c.id)
 }
 
-func (p *Probe) sleepTestCounter(proc *procInternal, id string) {
-	if id != "" {
-		if proc.cmds[0] == "sleep" { // sleep batch script
-			p.profileSleepTestCnt++
-		} else if proc.cmds[0] == "top" { // reset and read the result
-			s := fmt.Sprintf("PROC: sleep cnt= %d\n", p.profileSleepTestCnt)
-			log.Debug(s)
-			p.profileSleepTestCnt = 0
-		}
-	}
-}
-
 func (p *Probe) isSuspiciousProcess(proc *procInternal, id string) (*suspicProcInfo, bool) {
 	if id == "" && proc.name == "sshd" { // exclude sshd from group nodes
 		proc.riskType = "" // reset
@@ -764,7 +750,6 @@ func (p *Probe) isSuspiciousProcess(proc *procInternal, id string) (*suspicProcI
 		proc.riskyChild = true
 		return info, ok
 	}
-	return nil, false
 }
 
 /*
@@ -804,7 +789,7 @@ func (p *Probe) patchRuntimeUser(proc *procInternal) {
 // TODO, improved it with snapshot, passing by reference for all structures
 func (p *Probe) evalNewRunningApp(pid int) {
 	p.lockProcMux() // minimum section lock
-	c, _ := p.pidContainerMap[pid]
+	c := p.pidContainerMap[pid]
 	proc, ok := p.pidProcMap[pid] // bottom-line
 	if ok {
 		// the same pid might go throuth here twice, do not change its tag
@@ -934,7 +919,7 @@ func (p *Probe) checkUserGroup_uidChange(escalProc *procInternal, c *procContain
 	if auth, err := osutil.CheckUidAuthority(rUser, escalProc.pid); err != nil {
 		log.WithFields(log.Fields{"err": err}).Error("Check user authority fail")
 		return "", "", true
-	} else if auth == true {
+	} else if auth {
 		return "", "", false
 	}
 	return rUser, eUser, true
@@ -1408,7 +1393,7 @@ func (p *Probe) getUserName(pid, uid int) (user string) {
 		var ok bool
 		if user, ok = c.userns.users[uid]; !ok {
 			if root, min, err := osutil.GetAllUsers(pid, c.userns.users); err == nil {
-				user, _ = c.userns.users[uid]
+				user = c.userns.users[uid]
 				c.userns.root = root
 				c.userns.uidMin = min
 			}
@@ -1431,7 +1416,7 @@ func (p *Probe) checkUserGroup(escalProc *procInternal, c *procContainer) (strin
 	if auth, err := osutil.CheckUidAuthority(eUser, escalProc.pid); err != nil {
 		log.WithFields(log.Fields{"err": err}).Error("Check user authority fail")
 		return "", "", false
-	} else if auth == true {
+	} else if auth {
 		return "", "", false
 	}
 	return rUser, eUser, true
@@ -1607,7 +1592,6 @@ func (p *Probe) initReadProcesses() bool {
 		}
 	}
 	p.walkNewProcesses()
-	// p.processContainerNewChanges()
 	p.inspectNewProcesses(true) // catch existing processes
 	return foundKube
 }
@@ -2291,7 +2275,6 @@ func (p *Probe) isAllowIpRuntimeCommand(cmds []string) bool {
 			pass = true
 		case "del", "add", "flush", "set", "change", "append", "replace", "update", "deleteall": // operators
 			pass = false
-			break
 		}
 	}
 	return pass
@@ -2525,7 +2508,6 @@ func (p *Probe) procProfileEval(id string, proc *procInternal, bKeepAlive bool) 
 		}
 	}
 
-	//	proc.action = pp.Action
 	// NVSHAS-7501 - Adding check for our mode.
 	// If we are in protect mode, we should ignore the reported flag to determine the next actions.
 	// We don't need to report the violations more often, but we should make sure that if we
@@ -2579,6 +2561,14 @@ func (p *Probe) procProfileEval(id string, proc *procInternal, bKeepAlive bool) 
 				log.WithFields(log.Fields{"name": proc.name, "pid": proc.pid}).Debug("PROC: Denied and killed")
 			}
 		}
+	} else {
+		if proc.action == share.PolicyActionViolate || proc.action == share.PolicyActionDeny { // negative parent action
+			if proc.action != pp.Action {
+				proc.reported |= profileReported
+				pp.Action = proc.action
+				go p.sendProcessIncident(false, id, pp.Uuid, svcGroup, derivedGroup, proc)
+			}
+		}
 	}
 
 	// multiple learn process event are okay because they are merged at controllers.
@@ -2602,6 +2592,8 @@ func (p *Probe) sendProcessIncident(bDenied bool, id, uuid, group, derivedGroup 
 		s = p.makeProcessReport(id, proc, "Process profile violation, not from an image file", nil, false, group, uuid)
 	case share.CLUSReservedUuidShieldMode: // zero-drift incident
 		s = p.makeProcessReport(id, proc, "Process profile violation, not from its root process", nil, false, group, uuid)
+	case share.CLUSReservedUuidShieldNotListMode:
+		s = p.makeProcessReport(id, proc, "Process profile violation, not a listed family process", nil, false, group, uuid)
 	default: // rules-based incident
 		s = p.makeProcessReport(id, proc, "Process profile violation", nil, false, derivedGroup, uuid)
 	}
@@ -2645,28 +2637,10 @@ func (p *Probe) ProcessLookup(pid int) *fsmon.ProcInfo {
 }
 
 // ///////////////////////////////////////////////////////////////////
-// ///////////////////////////////////////////////////////////////////
-func printLastProcElements(list []*procInternal, nLastItems int) {
-	start := 0
-	length := len(list)
-	if nLastItems == -1 || nLastItems > length {
-		// all
-	} else if nLastItems <= length {
-		start = length - nLastItems
-	}
-
-	// log.WithFields(log.Fields{"nLastItems": nLastItems, "length": length, "start": start}).Debug("PROC:")
-
-	for i := start; i < length; i++ {
-		log.WithFields(log.Fields{"i": i, "cmds": list[i].cmds}).Debug("PROC:")
-	}
-}
-
 // ////// only from netlink monitor, already guarded by procMux
-func (p *Probe) addProcHistory(id string, proc *procInternal, bFromMonitor bool) {
-	var histProc *ringbuffer.RingBuffer
-	var ok bool
+const processHistoryLength = 400
 
+func (p *Probe) addProcHistory(id string, proc *procInternal, bFromMonitor bool) {
 	// no history for host
 	if id == "" {
 		return
@@ -2684,36 +2658,31 @@ func (p *Probe) addProcHistory(id string, proc *procInternal, bFromMonitor bool)
 		defer p.unlockProcMux()
 	}
 
-	if histProc, ok = p.procHistoryMap[id]; !ok {
-		histProc = ringbuffer.New(400) // TODO: more ?
-		p.procHistoryMap[id] = histProc
+	histProc, ok := p.procHistoryMap[id]
+	if !ok {
+		histProc = make([]*procInternal, 0)
 	}
-	histProc.Write(proc)
 
-	// Verification section, test only
-	// log.WithFields(log.Fields{"path": proc.path, "id": id, "cnt": histProc.Leng()}).Debug("PROC: ")
-	//	if histProc.Leng() == 400 {
-	//		var list []*procInternal
-	//		elements := histProc.DumpExt()
-	//		for i := 0; i < len(elements); i++ {
-	//			list = append(list, elements[i].(*procInternal))
-	//		}
-	//		printLastProcElements(list, 10)
-	//	}
+	// cap the history length to 400 entries
+	if len(histProc) < processHistoryLength {
+		histProc = append(histProc, proc)
+	} else {
+		histProc = append(histProc[1:], proc)
+	}
+	p.procHistoryMap[id] = histProc
 }
 
 // Patch for newly created conatiners, not for host
 func (p *Probe) PutBeginningProcEventsBackToWork(id string) int {
 	var cnt int
-	// log.Debug("PROC:")
+
 	// TODO:check the calling function, should be guarded only by procMux
 	p.lockProcMux()
 	defer p.unlockProcMux()
 
-	if histProc, ok := p.procHistoryMap[id]; ok {
-		elements := histProc.DumpExt()
+	if elements, ok := p.procHistoryMap[id]; ok {
 		for i := 0; i < len(elements); i++ {
-			proc := elements[i].(*procInternal)
+			proc := elements[i]
 
 			// filter the docker run events since the path is not in the containers
 			if global.RT.IsRuntimeProcess(proc.name, nil) {
@@ -2746,10 +2715,9 @@ func (p *Probe) purgeProcHistory() int {
 
 	p.lockProcMux()
 	defer p.unlockProcMux()
-	for id, histProc := range p.procHistoryMap {
+	for id := range p.procHistoryMap {
 		if !containerList.Contains(id) {
 			// purge it out of list
-			histProc.Clear()
 			delete(p.procHistoryMap, id)
 			cnt++
 			log.WithFields(log.Fields{"id": id}).Debug("PROC:")
@@ -2770,8 +2738,7 @@ func (p *Probe) alterRiskyAction(pid int, riskapp map[string]string) {
 // //
 func (p *Probe) updateCurrentRiskyAppRule(id string, pg *share.CLUSProcessProfile) {
 	var riskType string
-	var riskapp map[string]string
-	riskapp = make(map[string]string)
+	riskapp := make(map[string]string)
 	for _, pp := range pg.Process {
 		// It is based on the NAME only and could create a mismatched condition for discovery/monitor mode
 		// for example, the serveal sshd binaries in different folders but we release the chains here
@@ -2797,7 +2764,7 @@ func (p *Probe) updateCurrentRiskyAppRule(id string, pg *share.CLUSProcessProfil
 	}
 
 	// fill the non-existing items
-	for riskType, _ = range suspicProcMap {
+	for riskType = range suspicProcMap {
 		if _, ok := riskapp[riskType]; !ok {
 			riskapp[riskType] = share.PolicyActionCheckApp
 		}
@@ -3191,7 +3158,7 @@ func (p *Probe) IsAllowedShieldProcess(id, mode, svcGroup string, proc *procInte
 				bPass = false
 				ppe.Action = negativeResByMode(mode)
 				ppe.Uuid = share.CLUSReservedUuidAnchorMode
-			} else if bCanBeLearned == false {
+			} else if !bCanBeLearned {
 				// allowed but will not be learned
 				ppe.Action = share.PolicyActionAllow
 				mLog.WithFields(log.Fields{"ppe": ppe, "pid": proc.pid, "svcGroup": svcGroup}).Debug()
@@ -3208,6 +3175,11 @@ func (p *Probe) IsAllowedShieldProcess(id, mode, svcGroup string, proc *procInte
 					break
 				}
 
+				if mode == share.PolicyModeEvaluate {
+					// report as incidents
+					ppe.Uuid = share.CLUSReservedUuidShieldNotListMode
+					break
+				}
 			}
 
 			bPass = true
@@ -3230,7 +3202,7 @@ func (p *Probe) IsAllowedShieldProcess(id, mode, svcGroup string, proc *procInte
 					ppe.Action = share.PolicyActionAllow
 				}
 			} else {
-				ppe.Uuid = share.CLUSReservedUuidNotAlllowed
+				ppe.Uuid = share.CLUSReservedUuidShieldNotListMode
 			}
 		}
 	} else {

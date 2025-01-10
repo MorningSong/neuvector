@@ -40,13 +40,17 @@ func (r dockerhub) GetRepoList(org, name string, limit int) ([]*share.CLUSImage,
 
 	if !strings.Contains(name, "*") {
 		if org == "" {
-			return []*share.CLUSImage{&share.CLUSImage{Repo: fmt.Sprintf("library/%s", name)}}, nil
+			return []*share.CLUSImage{{Repo: fmt.Sprintf("library/%s", name)}}, nil
 		} else {
-			return []*share.CLUSImage{&share.CLUSImage{Repo: fmt.Sprintf("%s/%s", org, name)}}, nil
+			return []*share.CLUSImage{{Repo: fmt.Sprintf("%s/%s", org, name)}}, nil
 		}
 	}
 
-	u := r.url("v2/repositories/%s/?page_size=%d", org, limit)
+	u, err := r.url("v2/repositories/%s/?page_size=%d", org, limit)
+	if err != nil {
+		return nil, err
+	}
+
 	resp, err := r.rc.Client.Get(u)
 	if err != nil {
 		return nil, err

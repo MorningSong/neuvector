@@ -23,7 +23,6 @@ import (
 const ldapconfigmap string = "/etc/config/ldapinitcfg.yaml"
 const samlconfigmap string = "/etc/config/samlinitcfg.yaml"
 const oidcconfigmap string = "/etc/config/oidcinitcfg.yaml"
-const eulaconfigmap string = "/etc/config/eulainitcfg.yaml"
 const authconfigmap string = "/etc/config/userinitcfg.yaml"
 const roleconfigmap string = "/etc/config/roleinitcfg.yaml"
 const syscfgconfigmap string = "/etc/config/sysinitcfg.yaml"
@@ -43,32 +42,6 @@ type configMapHandlerContext struct {
 
 var cfgmapRetryTimer *time.Timer
 var cfgmapTried map[string]int = make(map[string]int) // cfg type -> tried times(<0 means no need to retry)
-
-func handleeulacfg(yaml_data []byte, load bool, skip *bool, context *configMapHandlerContext) error {
-
-	json_data, err1 := yaml.YAMLToJSON(yaml_data)
-	if err1 != nil {
-		log.WithFields(log.Fields{"error": err1}).Error("eula config to json convert error")
-		return err1
-	}
-
-	var req api.RESTLicenseKeyCfgMap
-	err := json.Unmarshal(json_data, &req)
-	if err != nil || req.LicenseKey == "" {
-		log.WithFields(log.Fields{"error": err}).Error("Request error")
-		return err
-	} else if !load && !req.AlwaysReload {
-		*skip = true
-		return nil
-	}
-
-	_, err2 := updateLicense(req.LicenseKey, true, true)
-	if err2 != nil {
-		log.WithFields(log.Fields{"err": err2}).Error("License update failed")
-		return err2
-	}
-	return nil
-}
 
 func handleldapcfg(yaml_data []byte, load bool, skip *bool, context *configMapHandlerContext) error {
 
@@ -780,7 +753,9 @@ func handleusercfg(yaml_data []byte, load bool, skip *bool, context *configMapHa
 		}
 		user.Locale = ruser.Locale
 
-		normalizeUserRoles(user)
+		if err := normalizeUserRoles(user); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("normalizeUserRoles")
+		}
 
 		if ruser.Fullname == common.DefaultAdminUser && ruser.Server == "" {
 			context.defAdminLoaded = true
@@ -849,7 +824,9 @@ func k8sResourceLog(ev share.TLogEvent, msg string, detail []string) {
 	} else {
 		clog.Msg = msg
 	}
-	evqueue.Append(&clog)
+	if err := evqueue.Append(&clog); err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("evqueue.Append")
+	}
 }
 
 func LoadInitCfg(load bool, platform string) bool {
@@ -865,14 +842,13 @@ func LoadInitCfg(load bool, platform string) bool {
 	}
 
 	configMaps := []configMap{
-		configMap{FileName: eulaconfigmap, Type: "eula", HandlerFunc: handleeulacfg},
-		configMap{FileName: roleconfigmap, Type: "role", HandlerFunc: handlecustomrolecfg},                   // must be before user/ldap/saml/oidc
-		configMap{FileName: pwdprofileconfigmap, Type: "password profile", HandlerFunc: handlepwdprofilecfg}, // must be before user
-		configMap{FileName: ldapconfigmap, Type: "ldap", HandlerFunc: handleldapcfg},
-		configMap{FileName: samlconfigmap, Type: "saml", HandlerFunc: handlesamlcfg},
-		configMap{FileName: oidcconfigmap, Type: "oidc", HandlerFunc: handleoidccfg},
-		configMap{FileName: syscfgconfigmap, Type: "system", HandlerFunc: handlesystemcfg},
-		configMap{FileName: authconfigmap, Type: "auth", HandlerFunc: handleusercfg},
+		{FileName: roleconfigmap, Type: "role", HandlerFunc: handlecustomrolecfg},                   // must be before user/ldap/saml/oidc
+		{FileName: pwdprofileconfigmap, Type: "password profile", HandlerFunc: handlepwdprofilecfg}, // must be before user
+		{FileName: ldapconfigmap, Type: "ldap", HandlerFunc: handleldapcfg},
+		{FileName: samlconfigmap, Type: "saml", HandlerFunc: handlesamlcfg},
+		{FileName: oidcconfigmap, Type: "oidc", HandlerFunc: handleoidccfg},
+		{FileName: syscfgconfigmap, Type: "system", HandlerFunc: handlesystemcfg},
+		{FileName: authconfigmap, Type: "auth", HandlerFunc: handleusercfg},
 	}
 
 	if clusHelper == nil {
@@ -884,10 +860,10 @@ func LoadInitCfg(load bool, platform string) bool {
 	context.platform = platform
 	for _, configMap := range configMaps {
 		// check whether we need to retry loading configmap when it failed in the last loading
-		if tried, _ := cfgmapTried[configMap.Type]; tried >= 6 {
+		if tried := cfgmapTried[configMap.Type]; tried >= 6 {
 			cfgmapTried[configMap.Type] = -2 // no need to retry loading this config
 		}
-		tried, _ := cfgmapTried[configMap.Type]
+		tried := cfgmapTried[configMap.Type]
 		if tried < 0 {
 			continue
 		}
@@ -1002,22 +978,37 @@ func handlefedcfg(yaml_data []byte) (string, error) {
 		if membership.FedRole == api.FedRoleMaster {
 			if membership.UseProxy != rconf.UseProxy {
 				membership.UseProxy = rconf.UseProxy
-				clusHelper.PutFedMembership(membership)
+				if err := clusHelper.PutFedMembership(membership); err != nil {
+					return "", err
+				}
 			}
 			if rconf.DeployRepoScanData != nil && fedSettings.DeployRepoScanData != *rconf.DeployRepoScanData {
 				var cfg share.CLUSFedSettings = share.CLUSFedSettings{DeployRepoScanData: *rconf.DeployRepoScanData}
-				clusHelper.PutFedSettings(nil, cfg)
+				if err := clusHelper.PutFedSettings(nil, cfg); err != nil {
+					return "", err
+				}
 			}
 			// check whether any published fed server info is different
 			if membership.MasterCluster.RestInfo != rconf.PrimaryRestInfo {
 				// it's already a master cluster but with different fed rest host/port. restart fed rest server
-				StartStopFedPingPoll(share.StopFedRestServer, 0, nil)
+				if err := StartStopFedPingPoll(share.StopFedRestServer, 0, nil); err != nil {
+					log.WithFields(log.Fields{"error": err}).Error("StartStopFedPingPoll")
+				}
 				membership.LocalRestInfo = rconf.PrimaryRestInfo
 				membership.MasterCluster.User = common.ReservedNvSystemUser
 				membership.MasterCluster.RestInfo = rconf.PrimaryRestInfo
-				clusHelper.PutFedMembership(membership)
-				clusHelper.PutFedJointClusterList(&share.CLUSFedJoinedClusterList{})
-				go StartStopFedPingPoll(share.StartFedRestServer, 0, nil)
+				if err := clusHelper.PutFedMembership(membership); err != nil {
+					return "", err
+				}
+				if err := clusHelper.PutFedJointClusterList(&share.CLUSFedJoinedClusterList{}); err != nil {
+					return "", err
+				}
+				go func() {
+					err := StartStopFedPingPoll(share.StartFedRestServer, 0, nil)
+					if err != nil {
+						log.WithFields(log.Fields{"error": err}).Error("StartStopFedPingPoll")
+					}
+				}()
 			}
 			promote = false
 			if rconf.ClusterName != "" {

@@ -180,10 +180,10 @@ type ibmsaNote struct {
 	Section          *ibmsaSection            `json:"section,omitempty"`
 }
 
-type ibmsaNotes struct {
-	Notes         []ibmsaNote `json:"notes"`
-	NextPageToken string      `json:"next_page_token"`
-}
+// type ibmsaNotes struct {
+// 	Notes         []ibmsaNote `json:"notes"`
+// 	NextPageToken string      `json:"next_page_token"`
+// }
 
 type ibmsaMetadata struct {
 	Notes        []ibmsaNote `json:"notes"`
@@ -333,7 +333,9 @@ func handlerGetIBMSAEpSetupToken(w http.ResponseWriter, r *http.Request, ps http
 		}
 		value, _ := json.Marshal(u)
 		key := share.CLUSUserKey(common.ReservedUserNameIBMSA)
-		cluster.PutIfNotExist(key, value, false)
+		if err := cluster.PutIfNotExist(key, value, false); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("PutIfNotExist")
+		}
 		user, _, _ = clusHelper.GetUserRev(common.ReservedUserNameIBMSA, acc)
 	}
 	if user != nil {
@@ -395,7 +397,7 @@ func handlerGetIBMSAEpInfo(w http.ResponseWriter, r *http.Request, ps httprouter
 		threadNoteName := fmt.Sprintf("providers/%s/notes/%s", providerID, _ibmFindingThreat) // ends with {findings-type}
 		resp := ibmsaMetadata{
 			Notes: []ibmsaNote{
-				ibmsaNote{
+				{
 					Kind:             "CARD",
 					ProviderID:       providerID,
 					ID:               _ibmFindingCard, // this note id is card id
@@ -413,7 +415,7 @@ func handlerGetIBMSAEpInfo(w http.ResponseWriter, r *http.Request, ps httprouter
 						BadgeText:        "No security event detected in the last 5 days",
 						//BadgeImage:            "{base64 content of the image associated to the card's badge}",
 						Elements: []ibmsaCardElement{
-							ibmsaCardElement{
+							{
 								Kind:             "NUMERIC",
 								Text:             "Security events count reported",
 								DefaultTimeRange: "4d",
@@ -422,12 +424,12 @@ func handlerGetIBMSAEpInfo(w http.ResponseWriter, r *http.Request, ps httprouter
 									FindingNoteNames: []string{threadNoteName},
 								},
 							},
-							ibmsaCardElement{
+							{
 								Kind:             "TIME_SERIES",
 								Text:             "Security events count reported",
 								DefaultTimeRange: "4d",
 								ValueTypes: []ibmsaCardValueType2{
-									ibmsaCardValueType2{
+									{
 										Kind:             "FINDING_COUNT",
 										Text:             "Security events",
 										FindingNoteNames: []string{threadNoteName},
@@ -437,7 +439,7 @@ func handlerGetIBMSAEpInfo(w http.ResponseWriter, r *http.Request, ps httprouter
 						},
 					},
 				},
-				ibmsaNote{
+				{
 					Kind:             "FINDING",
 					ShortDescription: "NeuVector security threat finding",
 					LongDescription:  "NeuVector Container Security",
@@ -450,7 +452,7 @@ func handlerGetIBMSAEpInfo(w http.ResponseWriter, r *http.Request, ps httprouter
 					Finding: &ibmsaFindingType{
 						Severity: "MEDIUM",
 						NextSteps: []ibmsaRemediationStep{
-							ibmsaRemediationStep{
+							{
 								Title: "Evaluate if server is vulnerable",
 							},
 						},
@@ -712,7 +714,7 @@ func ibmsaPostThreatFinding(f *api.IBMSAFinding) error {
 		Finding: &ibmsaFinding{
 			Certainty: "HIGH",
 			NextSteps: []ibmsaRemediationStep{
-				ibmsaRemediationStep{
+				{
 					Title: fmt.Sprintf("%s - Correlate security events in the NeuVector console to evaluate the scope of the attack", cacher.GetSystemConfigClusterName(accIBMSAPoster)),
 					Url:   "https://docs.neuvector.com",
 				},
@@ -811,7 +813,9 @@ func ibmsaPoster() {
 		noteIDs := []string{_ibmFindingCard, _ibmFindingThreat}
 		for _, noteID := range noteIDs {
 			if token, err := ibmsaGetToken(&cfg.IBMSAConfig); err == nil {
-				ibmsaGetNvNote(token, noteID, &cfg.IBMSAConfig)
+				if err := ibmsaGetNvNote(token, noteID, &cfg.IBMSAConfig); err != nil {
+					log.WithFields(log.Fields{"error": err}).Error("ibmsaGetNvNote")
+				}
 			}
 		}
 	} else {
@@ -853,9 +857,11 @@ Loop:
 			} else if f.Protocol >= 144 && f.Protocol <= 252 {
 				f.ProtoName = "Unassigned"
 			} else if f.ProtoName != "N/A" {
-				f.ProtoName, _ = ipPortoName[f.Protocol]
+				f.ProtoName = ipPortoName[f.Protocol]
 			}
-			ibmsaPostThreatFinding(&f)
+			if err := ibmsaPostThreatFinding(&f); err != nil {
+				log.WithFields(log.Fields{"error": err}).Debug("ibmsaPostThreatFinding")
+			}
 		case <-ibmsaStopChan:
 			log.Info("Stopped posting to IBM SA")
 			break Loop

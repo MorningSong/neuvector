@@ -98,15 +98,20 @@ func (r *gitlab) Login(cfg *share.CLUSRegistryConfig) (error, string) {
 	r.privateToken = cfg.GitlabPrivateToken
 
 	r.newGitlabClient()
-	r.newRegClient(cfg.Registry, cfg.Username, cfg.Password)
-	r.rc.Alive()
+	if err := r.newRegClient(cfg.Registry, cfg.Username, cfg.Password); err != nil {
+		return err, err.Error()
+	}
+
+	if _, err := r.rc.Alive(); err != nil {
+		return err, err.Error()
+	}
 
 	r.repoIdMap = make(map[string]*gitRepo)
 	return nil, ""
 }
 
 func (r *gitlab) getData(ur string) ([]byte, error) {
-	request, err := http.NewRequest("GET", ur, nil)
+	request, _ := http.NewRequest("GET", ur, nil)
 	request.Header.Add("PRIVATE-TOKEN", r.privateToken)
 	resp, err := r.gitlabClient.Do(request)
 	if err != nil {
@@ -162,7 +167,7 @@ func (r *gitlab) getProjects() ([]gitProject, error) {
 	ur := r.gitUrl("/projects")
 	smd.scanLog.WithFields(log.Fields{"url": ur}).Debug("")
 	if data, err := r.getData(ur); err == nil {
-		err = json.Unmarshal(data, &all)
+		e1 = json.Unmarshal(data, &all)
 	} else {
 		e1 = err
 	}
@@ -170,7 +175,7 @@ func (r *gitlab) getProjects() ([]gitProject, error) {
 	// get user projects
 	if users, err := r.getUsers(); err == nil {
 		for _, user := range users {
-			ur = r.gitUrl(fmt.Sprintf("/users/%d/projects", user.ID))
+			ur = r.gitUrl("/users/%d/projects", user.ID)
 			smd.scanLog.WithFields(log.Fields{"url": ur}).Debug("")
 			if data, err := r.getData(ur); err == nil {
 				if err = json.Unmarshal(data, &projects); err == nil {
@@ -181,7 +186,7 @@ func (r *gitlab) getProjects() ([]gitProject, error) {
 	} else {
 		e2 = err
 	}
-	ur = r.gitUrl(fmt.Sprintf("/users/%s/projects", r.username))
+	ur = r.gitUrl("/users/%s/projects", r.username)
 	smd.scanLog.WithFields(log.Fields{"url": ur}).Debug("")
 	if data, err := r.getData(ur); err == nil {
 		if err = json.Unmarshal(data, &projects); err == nil {
@@ -194,7 +199,7 @@ func (r *gitlab) getProjects() ([]gitProject, error) {
 	// get group projects
 	if groups, err := r.getGroups(); err == nil {
 		for _, group := range groups {
-			ur = r.gitUrl(fmt.Sprintf("/groups/%d/projects?include_subgroups=true", group.ID))
+			ur = r.gitUrl("/groups/%d/projects?include_subgroups=true", group.ID)
 			smd.scanLog.WithFields(log.Fields{"url": ur}).Debug("")
 			if data, err := r.getData(ur); err == nil {
 				if err = json.Unmarshal(data, &projects); err == nil {

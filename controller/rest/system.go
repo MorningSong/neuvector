@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"mime/multipart"
 	"net"
@@ -126,7 +127,11 @@ func handlerSystemUsage(w http.ResponseWriter, r *http.Request, ps httprouter.Pa
 
 		var nvUpgradeInfo share.CLUSCheckUpgradeInfo
 		if value, _ := cluster.Get(share.CLUSTelemetryStore + "controller"); value != nil {
-			json.Unmarshal(value, &nvUpgradeInfo)
+			if err := json.Unmarshal(value, &nvUpgradeInfo); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("Unmarshal")
+				restRespError(w, http.StatusInternalServerError, api.RESTErrFailReadCluster)
+				return
+			}
 			if nvUpgradeInfo.MinUpgradeVersion.Version != "" {
 				resp.TelemetryStatus.MinUpgradeVersion = api.RESTUpgradeVersionInfo{
 					Version:     nvUpgradeInfo.MinUpgradeVersion.Version,
@@ -215,6 +220,204 @@ func handlerSystemSummary(w http.ResponseWriter, r *http.Request, ps httprouter.
 	restRespSuccess(w, r, &resp, acc, login, nil, "Get system summary")
 }
 
+func calcSecurityScore(metrics *api.RESTRiskScoreMetrics, login *loginSession) api.RESTSecurityScores {
+
+	isGlobalUser := true
+	if r := login.domainRoles[access.AccessDomainGlobal]; r == "" {
+		if permits := login.extraDomainPermits[access.AccessDomainGlobal]; permits.IsEmpty() {
+			isGlobalUser = false
+		}
+	}
+
+	const MAX_SERVICE_MODE_SCORE = 26
+	const MAX_NEW_SERVICE_MODE_SCORE = 2
+	const MAX_PRIVILEGED_CONTAINER_SCORE = 4
+	const MAX_RUN_AS_ROOT_CONTAINER_SCORE = 4
+	const MAX_ADMISSION_RULE_SCORE = 4
+	const MAX_PLATFORM_VUL_SCORE = 2
+	const MAX_HOST_VUL_SCORE = 6
+	const MAX_POD_VUL_SCORE = 8
+	const MAX_MODE_EXPOSURE = 10.0
+	const MAX_VIOLATE_EXPOSURE = 12.0
+	const MAX_THREAT_EXPOSURE = 20.0
+	const THRESHOLD_EXPOSURE_100 = 5.0
+	const THRESHOLD_EXPOSURE_1000 = 25.0
+	const THRESHOLD_EXPOSURE_10000 = 62.5
+	const RATIO_DISCOVER_VUL = 1.0 / 15
+	const RATIO_MONITOR_VUL = 1.0 / 60
+	const RATIO_PROTECT_VUL = 1.0 / 120
+	const RATIO_HOST_VUL = 1.0 / 20
+	const RATIO_PROTECT_MONITOR_EXPOSURE = 1
+	const RATIO_DISCOVER_EXPOSURE = 3
+	const RATIO_VIOLATED_EXPOSURE = 4
+	const RATIO_THREATENED_EXPOSURE = 8
+
+	// Formula for security risk score:
+	//	Good: 0 <= Score < 21
+	//	Fair: 21 <= Score < 51
+	//	Poor: 51 <= Score
+
+	// Service connection risk (New service mode score). Max newServiceModeScore: 4
+	newServiceModeScore := 0
+	if metrics.NewServiceMode == share.PolicyModeLearn {
+		newServiceModeScore += MAX_NEW_SERVICE_MODE_SCORE
+	}
+	if metrics.NewProfileMode == share.PolicyModeLearn {
+		newServiceModeScore += MAX_NEW_SERVICE_MODE_SCORE
+	}
+
+	// Service connection risk (Service mode score). Max serviceModeScore: 26
+	var serviceModeScoreBy100 int
+	if metrics.Groups.Groups != 0 {
+		serviceModeScoreBy100 = int(math.Ceil(
+			(float64(metrics.Groups.DiscoverGroups+metrics.Groups.ProfileDiscoverGroups)*0.5 - float64(metrics.Groups.DiscoverGroupsZD)*0.3) /
+				float64(metrics.Groups.Groups) * 100))
+	}
+	serviceModeScore := int(math.Ceil(float64(serviceModeScoreBy100) / 100.0 * MAX_SERVICE_MODE_SCORE))
+
+	// Ingress/Egress exposure risk. Max: 42
+	var exposureScore int
+	totalRunningPods := float64(metrics.WLs.RunningPods)
+	if totalRunningPods > 0 {
+		var exposureDensity float64
+		if totalRunningPods > 10000 {
+			exposureDensity = 1.0 / THRESHOLD_EXPOSURE_10000
+		} else if totalRunningPods > 1000 {
+			exposureDensity = 1.0 / (THRESHOLD_EXPOSURE_1000 + ((THRESHOLD_EXPOSURE_10000 - THRESHOLD_EXPOSURE_1000) * totalRunningPods / 10000.0))
+		} else if totalRunningPods > 100 {
+			exposureDensity = 1.0 / (THRESHOLD_EXPOSURE_100 + ((THRESHOLD_EXPOSURE_1000 - THRESHOLD_EXPOSURE_100) * totalRunningPods / 1000.0))
+		} else {
+			exposureDensity = 1.0 / (1.0 + (THRESHOLD_EXPOSURE_100 * totalRunningPods / 100.0))
+		}
+		modeScore := float64(metrics.WLs.ProtectExtEPs+metrics.WLs.MonitorExtEPs)*exposureDensity*RATIO_PROTECT_MONITOR_EXPOSURE +
+			float64(metrics.WLs.DiscoverExtEPs)*exposureDensity*RATIO_DISCOVER_EXPOSURE
+		violationScore := float64(metrics.WLs.VioExtEPs) * exposureDensity * RATIO_VIOLATED_EXPOSURE
+		threatScore := float64(metrics.WLs.ThrtExtEPs) * exposureDensity * RATIO_THREATENED_EXPOSURE
+		if modeScore > MAX_MODE_EXPOSURE {
+			modeScore = MAX_MODE_EXPOSURE
+		}
+		if violationScore > MAX_VIOLATE_EXPOSURE {
+			violationScore = MAX_VIOLATE_EXPOSURE
+		}
+		if threatScore > MAX_THREAT_EXPOSURE {
+			threatScore = MAX_THREAT_EXPOSURE
+		}
+		exposureScore = int(math.Ceil(modeScore + violationScore + threatScore))
+	}
+	exposureScoreBy100 := int(math.Ceil(float64(exposureScore) * 100 / (MAX_MODE_EXPOSURE + MAX_VIOLATE_EXPOSURE + MAX_THREAT_EXPOSURE)))
+
+	// Max: 4, 4, 4
+	var privilegedContainerScore int
+	var runAsRootScore int
+	var admissionRuleScore int
+	if metrics.WLs.PrivilegedWLs > 0 {
+		privilegedContainerScore = MAX_PRIVILEGED_CONTAINER_SCORE
+	}
+	if metrics.WLs.RootWLs > 0 {
+		runAsRootScore = MAX_RUN_AS_ROOT_CONTAINER_SCORE
+	}
+	if metrics.DenyAdmCtrlRules > 0 {
+		admissionRuleScore = MAX_ADMISSION_RULE_SCORE
+	}
+
+	// Vulnerability exploit risk (Only PodScore). Max: 16
+	var podScore float64
+	if totalRunningPods > 0 {
+		podScore = float64(metrics.CVEs.DiscoverCVEs)/totalRunningPods*RATIO_DISCOVER_VUL +
+			float64(metrics.CVEs.MonitorCVEs)/totalRunningPods*RATIO_MONITOR_VUL +
+			float64(metrics.CVEs.ProtectCVEs)/totalRunningPods*RATIO_PROTECT_VUL
+		if podScore > MAX_POD_VUL_SCORE {
+			podScore = MAX_POD_VUL_SCORE
+		}
+	}
+	var hostScore float64
+	if metrics.Hosts > 0 {
+		hostScore = (float64(metrics.CVEs.HostCVEs) / float64(metrics.Hosts)) * RATIO_HOST_VUL
+		if hostScore > MAX_HOST_VUL_SCORE {
+			hostScore = MAX_HOST_VUL_SCORE
+		}
+	}
+	var platformScore float64
+	if metrics.CVEs.PlatformCVEs > 0 {
+		platformScore = MAX_PLATFORM_VUL_SCORE
+	}
+
+	vulnerabilityScore := int(math.Ceil(podScore + hostScore + platformScore))
+	vulnerabilityScoreBy100 := int(math.Ceil(float64(vulnerabilityScore) * 100 / (MAX_POD_VUL_SCORE + MAX_HOST_VUL_SCORE + MAX_PLATFORM_VUL_SCORE)))
+
+	var securityRiskScore int
+	if isGlobalUser {
+		securityRiskScore = newServiceModeScore + serviceModeScore + exposureScore + privilegedContainerScore +
+			runAsRootScore + admissionRuleScore + vulnerabilityScore
+	} else {
+		_score := float64(serviceModeScore+exposureScore+privilegedContainerScore+runAsRootScore+vulnerabilityScore) /
+			(MAX_MODE_EXPOSURE + MAX_VIOLATE_EXPOSURE + MAX_THREAT_EXPOSURE + MAX_PRIVILEGED_CONTAINER_SCORE +
+				MAX_RUN_AS_ROOT_CONTAINER_SCORE + MAX_POD_VUL_SCORE + MAX_HOST_VUL_SCORE + MAX_PLATFORM_VUL_SCORE)
+		securityRiskScore = int(_score * 100)
+	}
+
+	return api.RESTSecurityScores{
+		NewServiceModeScore:      newServiceModeScore,
+		ServiceModeScore:         serviceModeScore,
+		ServiceModeScoreBy100:    serviceModeScoreBy100,
+		ExposureScore:            exposureScore,
+		ExposureScoreBy100:       exposureScoreBy100,
+		PrivilegedContainerScore: privilegedContainerScore,
+		RunAsRootScore:           runAsRootScore,
+		AdmissionRuleScore:       admissionRuleScore,
+		VulnerabilityScore:       vulnerabilityScore,
+		VulnerabilityScoreBy100:  vulnerabilityScoreBy100,
+		SecurityRiskScore:        securityRiskScore,
+	}
+}
+
+func handlerGetSystemScoreMetrics(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	log.WithFields(log.Fields{"URL": r.URL.String()}).Debug("")
+	defer r.Body.Close()
+
+	acc, login := getAccessControl(w, r, "")
+	if acc == nil {
+		return
+	}
+
+	// any user can call this API to get system summary, but only users with global 'config' permission can see non-zero host/controller/agent/scanner counters
+	accSysConfig := acc.BoostPermissions(share.PERM_SYSTEM_CONFIG)
+
+	resp := cacher.GetRiskScoreMetrics(accSysConfig, acc)
+	scores := calcSecurityScore(resp.Metrics, login)
+	resp.SecurityScores = &scores
+
+	restRespSuccess(w, r, resp, acc, login, nil, "Get system score metrics data")
+}
+
+func handlerPredictSystemScore(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	log.WithFields(log.Fields{"URL": r.URL.String()}).Debug("")
+	defer r.Body.Close()
+
+	acc, login := getAccessControl(w, r, "")
+	if acc == nil {
+		return
+	}
+
+	body, _ := io.ReadAll(r.Body)
+
+	var data api.RESTPredictScoreData
+	err := json.Unmarshal(body, &data)
+	if err != nil || data.Metrics == nil {
+		log.WithFields(log.Fields{"error": err}).Error("Request error")
+		restRespError(w, http.StatusBadRequest, api.RESTErrInvalidRequest)
+		return
+	}
+
+	scores := calcSecurityScore(data.Metrics, login)
+	resp := api.RESTScoreMetricsData{
+		Metrics:        data.Metrics,
+		SecurityScores: &scores,
+	}
+
+	restRespSuccess(w, r, &resp, acc, login, nil, "Predict system score improvement")
+}
+
 func handlerSystemGetConfigBase(apiVer string, w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	log.WithFields(log.Fields{"URL": r.URL.String()}).Debug()
 	defer r.Body.Close()
@@ -226,7 +429,7 @@ func handlerSystemGetConfigBase(apiVer string, w http.ResponseWriter, r *http.Re
 
 	var rconf *api.RESTSystemConfig
 	var fedConf *api.RESTFedSystemConfig
-	scope, _ := restParseQuery(r).pairs[api.QueryScope]
+	scope := restParseQuery(r).pairs[api.QueryScope]
 	if scope == share.ScopeFed || scope == share.ScopeAll {
 		if fedRole := cacher.GetFedMembershipRoleNoAuth(); fedRole == api.FedRoleMaster || fedRole == api.FedRoleJoint {
 			if cconf := cacher.GetFedSystemConfig(acc); cconf == nil {
@@ -301,7 +504,7 @@ func handlerSystemGetConfigBase(apiVer string, w http.ResponseWriter, r *http.Re
 				Config: &api.RESTSystemConfigV2{
 					NewSvc: api.RESTSystemConfigNewSvcV2{
 						NewServicePolicyMode:      rconf.NewServicePolicyMode,
-						NewServiceProfileMode:      rconf.NewServiceProfileMode,
+						NewServiceProfileMode:     rconf.NewServiceProfileMode,
 						NewServiceProfileBaseline: rconf.NewServiceProfileBaseline,
 					},
 					Syslog: api.RESTSystemConfigSyslogV2{
@@ -423,44 +626,29 @@ func handlerSystemRequest(w http.ResponseWriter, r *http.Request, ps httprouter.
 	}
 
 	rc := req.Request
-	if rc.PolicyMode != nil && *rc.PolicyMode == share.PolicyModeEnforce &&
-		licenseAllowEnforce() == false {
-		restRespError(w, http.StatusBadRequest, api.RESTErrLicenseFail)
-		return
-	}
-	if rc.ProfileMode != nil && *rc.ProfileMode == share.PolicyModeEnforce &&
-		licenseAllowEnforce() == false {
-		restRespError(w, http.StatusBadRequest, api.RESTErrLicenseFail)
-		return
-	}
-	policy_mode := ""
-	if rc.PolicyMode != nil {
-		switch *rc.PolicyMode {
-		case share.PolicyModeLearn, share.PolicyModeEvaluate, share.PolicyModeEnforce:
-		default:
-			e := "Invalid policy mode"
-			log.WithFields(log.Fields{"policy_mode": *rc.PolicyMode}).Error(e)
-			restRespErrorMessage(w, http.StatusBadRequest, api.RESTErrInvalidRequest, e)
+
+	if rc.PolicyMode != nil || rc.ProfileMode != nil {
+		for attribute, mode := range map[string]*string{"policy": rc.PolicyMode, "profile": rc.ProfileMode} {
+			if mode != nil && !share.IsValidPolicyMode(*mode) {
+				e := fmt.Sprintf("Invalid %s mode", attribute)
+				log.WithFields(log.Fields{"mode": *mode}).Error(e)
+				restRespErrorMessage(w, http.StatusBadRequest, api.RESTErrInvalidRequest, e)
+				return
+			}
+		}
+		policy_mode := ""
+		if rc.PolicyMode != nil {
+			policy_mode = *rc.PolicyMode
+		}
+		profile_mode := ""
+		if rc.ProfileMode != nil {
+			profile_mode = *rc.ProfileMode
+		}
+		if err := setServicePolicyModeAll(policy_mode, profile_mode, acc); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("Fail to set policy and  profile mode")
+			restRespError(w, http.StatusInternalServerError, api.RESTErrFailWriteCluster)
 			return
 		}
-		policy_mode = *rc.PolicyMode
-	}
-	profile_mode := ""
-	if rc.ProfileMode != nil {
-		switch *rc.ProfileMode {
-		case share.PolicyModeLearn, share.PolicyModeEvaluate, share.PolicyModeEnforce:
-		default:
-			e := "Invalid profile mode"
-			log.WithFields(log.Fields{"profile_mode": *rc.ProfileMode}).Error(e)
-			restRespErrorMessage(w, http.StatusBadRequest, api.RESTErrInvalidRequest, e)
-			return
-		}
-		profile_mode = *rc.ProfileMode
-	}
-	if err := setServicePolicyModeAll(policy_mode, profile_mode, acc); err != nil {
-		log.WithFields(log.Fields{"error": err}).Error("Fail to set policy and  profile mode")
-		restRespError(w, http.StatusInternalServerError, api.RESTErrFailWriteCluster)
-		return
 	}
 
 	if rc.BaselineProfile != nil {
@@ -515,16 +703,30 @@ func handlerSystemRequest(w http.ResponseWriter, r *http.Request, ps httprouter.
 			key := share.CLUSUniconfWorkloadKey(hostID, wl.ID)
 
 			// Retrieve from the cluster
-			value, rev, _ := cluster.GetRev(key)
+			value, rev, err := cluster.GetRev(key)
+			if err != nil {
+				restRespError(w, http.StatusInternalServerError, api.RESTErrFailReadCluster)
+				return
+			}
 			if value != nil {
-				json.Unmarshal(value, &cconf)
+				if err := json.Unmarshal(value, &cconf); err != nil {
+					log.WithFields(log.Fields{"error": err}).Error("Unmarshal")
+					restRespError(w, http.StatusInternalServerError, api.RESTErrFailReadCluster)
+					return
+				}
 			} else {
 				cconf.Wire = share.WireDefault
 			}
 			cconf.Quarantine = false
 			cconf.QuarReason = ""
 
-			value, _ = json.Marshal(&cconf)
+			value, err = json.Marshal(&cconf)
+			if err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("Marshal")
+				restRespError(w, http.StatusInternalServerError, api.RESTErrFailReadCluster)
+				return
+			}
+
 			if err = cluster.PutRev(key, value, rev); err != nil {
 				log.WithFields(log.Fields{"error": err, "rev": rev}).Error()
 				restRespError(w, http.StatusInternalServerError, api.RESTErrFailWriteCluster)
@@ -559,7 +761,7 @@ func validateWebhook(h *api.RESTWebhook) (int, error) {
 		return api.RESTErrInvalidName, errors.New(msg)
 	}
 
-	if isObjectNameValid(h.Name) == false {
+	if !isObjectNameValid(h.Name) {
 		log.WithFields(log.Fields{"name": h.Name}).Error("Invalid webhook name")
 		return api.RESTErrInvalidName, errors.New("Invalid webhook name")
 	}
@@ -734,7 +936,7 @@ func handlerSystemWebhookCreate(w http.ResponseWriter, r *http.Request, ps httpr
 			return
 		}
 
-		for i, _ := range cconf.Webhooks {
+		for i := range cconf.Webhooks {
 			if cconf.Webhooks[i].Name == rwh.Name {
 				log.WithFields(log.Fields{"name": rwh.Name}).Error("Duplicate webhook name")
 				restRespErrorMessage(w, http.StatusBadRequest, api.RESTErrInvalidRequest, "Duplicate webhook name")
@@ -780,7 +982,7 @@ func handlerSystemWebhookConfig(w http.ResponseWriter, r *http.Request, ps httpr
 	}
 
 	var scope string
-	if scope, _ = restParseQuery(r).pairs[api.QueryScope]; scope == "" {
+	if scope = restParseQuery(r).pairs[api.QueryScope]; scope == "" {
 		scope = share.ScopeLocal
 	} else if scope != share.ScopeFed && scope != share.ScopeLocal {
 		restRespError(w, http.StatusBadRequest, api.RESTErrInvalidRequest)
@@ -855,7 +1057,7 @@ func handlerSystemWebhookConfig(w http.ResponseWriter, r *http.Request, ps httpr
 		}
 
 		var found bool
-		for i, _ := range cconf.Webhooks {
+		for i := range cconf.Webhooks {
 			if cconf.Webhooks[i].Name == rwh.Name {
 				cconf.Webhooks[i] = share.CLUSWebhook{
 					Name:     rwh.Name,
@@ -911,7 +1113,7 @@ func handlerSystemWebhookDelete(w http.ResponseWriter, r *http.Request, ps httpr
 	}
 
 	var scope string
-	if scope, _ = restParseQuery(r).pairs[api.QueryScope]; scope == "" {
+	if scope = restParseQuery(r).pairs[api.QueryScope]; scope == "" {
 		scope = share.ScopeLocal
 	} else if scope != share.ScopeFed && scope != share.ScopeLocal {
 		restRespError(w, http.StatusBadRequest, api.RESTErrInvalidRequest)
@@ -975,7 +1177,7 @@ func handlerSystemWebhookDelete(w http.ResponseWriter, r *http.Request, ps httpr
 		}
 
 		var found bool
-		for i, _ := range cconf.Webhooks {
+		for i := range cconf.Webhooks {
 			if cconf.Webhooks[i].Name == name {
 				// No retain order. Show API sort the webhook list.
 				s := len(cconf.Webhooks)
@@ -1044,13 +1246,7 @@ func configSystemConfig(w http.ResponseWriter, acc *access.AccessControl, login 
 	var rc *api.RESTSystemConfigConfig
 	if scope == share.ScopeLocal && rconf.Config != nil {
 		rc = rconf.Config
-		/*
-			if rc.NewServicePolicyMode != nil && *rc.NewServicePolicyMode == share.PolicyModeEnforce &&
-				licenseAllowEnforce() == false {
-				restRespError(w, http.StatusBadRequest, api.RESTErrLicenseFail)
-				return
-			}
-		*/
+
 		if rc.WebhookUrl != nil {
 			*rc.WebhookUrl = strings.TrimSpace(*rc.WebhookUrl)
 		}
@@ -1095,22 +1291,13 @@ func configSystemConfig(w http.ResponseWriter, acc *access.AccessControl, login 
 
 			// global network service policy mode
 			if nc.NetServicePolicyMode != nil {
-				/*
-					if *nc.NetServicePolicyMode == share.PolicyModeEnforce &&
-						licenseAllowEnforce() == false {
-						restRespError(w, http.StatusBadRequest, api.RESTErrLicenseFail)
-						return
-					}
-				*/
-				switch *nc.NetServicePolicyMode {
-				case share.PolicyModeLearn, share.PolicyModeEvaluate, share.PolicyModeEnforce:
-					cconf.NetServicePolicyMode = *nc.NetServicePolicyMode
-				default:
+				if !share.IsValidPolicyMode(*nc.NetServicePolicyMode) {
 					e := "Invalid network service policy mode"
 					log.WithFields(log.Fields{"net_service_policy_mode": *nc.NetServicePolicyMode}).Error(e)
 					restRespErrorMessage(w, http.StatusBadRequest, api.RESTErrInvalidRequest, e)
 					return kick, errors.New(e)
 				}
+				cconf.NetServicePolicyMode = *nc.NetServicePolicyMode
 			}
 			if nc.DisableNetPolicy != nil {
 				cconf.DisableNetPolicy = *nc.DisableNetPolicy
@@ -1179,30 +1366,24 @@ func configSystemConfig(w http.ResponseWriter, acc *access.AccessControl, login 
 				}
 			}
 
-			// New policy mode
+			// Default policy/profile modes for new services
+			for attribute, mode := range map[string]*string{"policy": rc.NewServicePolicyMode, "profile": rc.NewServiceProfileMode} {
+				if mode != nil {
+					if !share.IsValidPolicyMode(*mode) {
+						e := fmt.Sprintf("Invalid new service %s mode", attribute)
+						log.WithFields(log.Fields{"mode": *mode}).Error(e)
+						restRespErrorMessage(w, http.StatusBadRequest, api.RESTErrInvalidRequest, e)
+						return kick, errors.New(e)
+					}
+				}
+			}
 			if rc.NewServicePolicyMode != nil {
-				switch *rc.NewServicePolicyMode {
-				case share.PolicyModeLearn, share.PolicyModeEvaluate, share.PolicyModeEnforce:
-					cconf.NewServicePolicyMode = *rc.NewServicePolicyMode
-				default:
-					e := "Invalid new service policy mode"
-					log.WithFields(log.Fields{"new_service_policy_mode": *rc.NewServicePolicyMode}).Error(e)
-					restRespErrorMessage(w, http.StatusBadRequest, api.RESTErrInvalidRequest, e)
-					return kick, errors.New(e)
-				}
+				cconf.NewServicePolicyMode = *rc.NewServicePolicyMode
 			}
-			// New profile mode
 			if rc.NewServiceProfileMode != nil {
-				switch *rc.NewServiceProfileMode {
-				case share.PolicyModeLearn, share.PolicyModeEvaluate, share.PolicyModeEnforce:
-					cconf.NewServiceProfileMode = *rc.NewServiceProfileMode
-				default:
-					e := "Invalid new service profile mode"
-					log.WithFields(log.Fields{"new_service_profile_mode": *rc.NewServiceProfileMode}).Error(e)
-					restRespErrorMessage(w, http.StatusBadRequest, api.RESTErrInvalidRequest, e)
-					return kick, errors.New(e)
-				}
+				cconf.NewServiceProfileMode = *rc.NewServiceProfileMode
 			}
+
 			// New baseline profile setting
 			if rc.NewServiceProfileBaseline != nil {
 				blValue := strings.ToLower(*rc.NewServiceProfileBaseline)
@@ -1375,7 +1556,7 @@ func configSystemConfig(w http.ResponseWriter, acc *access.AccessControl, login 
 			}
 
 			if rc.AuthByPlatform != nil {
-				if cconf.AuthByPlatform && *rc.AuthByPlatform == false {
+				if cconf.AuthByPlatform && !*rc.AuthByPlatform {
 					kick = true
 				}
 				cconf.AuthByPlatform = *rc.AuthByPlatform
@@ -1811,10 +1992,10 @@ func session2REST(s *share.CLUSSession) *api.RESTSession {
 	if s.Application == 0 {
 		app = utils.GetPortLink(uint8(s.IPProto), uint16(s.ServerPort))
 	} else {
-		app, _ = common.AppNameMap[s.Application]
+		app = common.AppNameMap[s.Application]
 	}
 	if s.XffApp != 0 {
-		xffapp, _ = common.AppNameMap[s.XffApp]
+		xffapp = common.AppNameMap[s.XffApp]
 	}
 	id := uint64(s.ID)
 	if s.HostMode {
@@ -2075,7 +2256,10 @@ func handlerMeterList(w http.ResponseWriter, r *http.Request, ps httprouter.Para
 func getNvUpgradeInfo() *api.RESTCheckUpgradeInfo {
 	var nvUpgradeInfo share.CLUSCheckUpgradeInfo
 	if value, _ := cluster.Get(share.CLUSTelemetryStore + "controller"); value != nil {
-		json.Unmarshal(value, &nvUpgradeInfo)
+		if err := json.Unmarshal(value, &nvUpgradeInfo); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("Unmarshal")
+			return nil
+		}
 	}
 
 	empty := share.CLUSCheckUpgradeVersion{}
@@ -2322,7 +2506,9 @@ func configLog(ev share.TLogEvent, login *loginSession, msg string) {
 		UserSession:    login.id,
 		Msg:            msg,
 	}
-	evqueue.Append(&clog)
+	if err := evqueue.Append(&clog); err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("evqueue.Append")
+	}
 }
 
 func rawExport(w http.ResponseWriter, sections utils.Set) error {
@@ -2425,34 +2611,43 @@ func handlerConfigExport(w http.ResponseWriter, r *http.Request, ps httprouter.P
 func rawImportRead(r *http.Request, tmpfile *os.File) (int, error) {
 	log.Info()
 
-	/*
-		re := bufio.NewReader(r.Body)
-		body, _ := re.Peek(16)
-		log.WithFields(log.Fields{"string": string(body[:]), "body": body}).Error("=====================")
-	*/
 	lines := 0
 	gzr, err := gzip.NewReader(r.Body)
 	if err != nil {
-		e := "Invalid file format"
-		log.WithFields(log.Fields{"error": err}).Error(e)
-		return lines, errors.New(e)
+		log.WithFields(log.Fields{"error": err}).Error("Invalid file format")
+		return 0, fmt.Errorf("invalid file format: %w", err)
 	}
 	defer gzr.Close()
 
 	reader := bufio.NewReader(gzr)
 	writer := bufio.NewWriter(tmpfile)
+	defer func() {
+		if err := writer.Flush(); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("Error flushing writer")
+		}
+		if err := tmpfile.Close(); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("Error closing tmpfile")
+		}
+	}()
+
 	for {
 		data, err := reader.ReadString('\n')
-		if err == io.EOF || err != nil {
+		if err == io.EOF {
 			break
-		} else if data == "\n" || strings.HasPrefix(data, "#") {
+		}
+		if err != nil {
+			return 0, fmt.Errorf("error reading data: %w", err)
+		}
+
+		if data == "\n" || strings.HasPrefix(data, "#") {
 			continue
 		}
-		writer.WriteString(data)
+
+		if _, err := writer.WriteString(data); err != nil {
+			return 0, fmt.Errorf("error writing data: %w", err)
+		}
 		lines++
 	}
-	writer.Flush()
-	tmpfile.Close()
 
 	return lines, nil
 }
@@ -2460,9 +2655,17 @@ func rawImportRead(r *http.Request, tmpfile *os.File) (int, error) {
 func multipartImportRead(r *http.Request, params map[string]string, tmpfile *os.File) (int, error) {
 	log.WithFields(log.Fields{"params": params}).Info()
 
-	var writer *bufio.Writer
-	mpr := multipart.NewReader(r.Body, params["boundary"])
 	lines := 0
+	mpr := multipart.NewReader(r.Body, params["boundary"])
+	writer := bufio.NewWriter(tmpfile)
+	defer func() {
+		if err := writer.Flush(); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("Error flushing writer")
+		}
+		if err := tmpfile.Close(); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("Error closing tmpfile")
+		}
+	}()
 
 	for {
 		part, err := mpr.NextPart()
@@ -2470,36 +2673,32 @@ func multipartImportRead(r *http.Request, params map[string]string, tmpfile *os.
 			break
 		}
 		if err != nil {
-			e := "Invalid multi-part file format"
-			log.WithFields(log.Fields{"error": err}).Error(e)
-			return lines, errors.New(e)
+			return 0, fmt.Errorf("invalid multipart file format: %w", err)
 		}
 
 		if part.FormName() == multipartConfigName {
 			gzr, err := gzip.NewReader(part)
 			if err != nil {
-				e := "Invalid file format"
-				log.WithFields(log.Fields{"error": err}).Error(e)
-				return lines, errors.New(e)
+				return 0, fmt.Errorf("invalid file format in gzip part: %w", err)
 			}
 			defer gzr.Close()
 
 			reader := bufio.NewReader(gzr)
-			if writer == nil {
-				writer = bufio.NewWriter(tmpfile)
-			}
 			for {
 				data, err := reader.ReadString('\n')
-				if err == io.EOF || err != nil {
+				if err == io.EOF {
 					break
 				}
-				writer.WriteString(data)
+				if err != nil {
+					return 0, fmt.Errorf("error reading gzip data: %w", err)
+				}
+				if _, err := writer.WriteString(data); err != nil {
+					return 0, fmt.Errorf("error writing to tmpfile: %w", err)
+				}
 				lines++
 			}
 		}
 	}
-	writer.Flush()
-	tmpfile.Close()
 
 	return lines, nil
 }
@@ -2607,7 +2806,9 @@ func _importHandler(w http.ResponseWriter, r *http.Request, tid, importType, tem
 			CallerRemote:   login.remote,
 			CallerID:       login.id,
 		}
-		clusHelper.PutImportTask(&importTask)
+		if err := clusHelper.PutImportTask(&importTask); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("PutImportTask")
+		}
 
 		lines := 0
 		if importType == share.IMPORT_TYPE_CONFIG {
@@ -2619,7 +2820,8 @@ func _importHandler(w http.ResponseWriter, r *http.Request, tid, importType, tem
 		} else {
 			body, _ := io.ReadAll(r.Body)
 			body = _preprocessImportBody(body)
-			json_data, err := yaml.YAMLToJSON(body)
+			var json_data []byte
+			json_data, err = yaml.YAMLToJSON(body)
 			if err != nil {
 				log.WithFields(log.Fields{"error": err, "importType": importType}).Error("Request error")
 				restRespError(w, http.StatusBadRequest, api.RESTErrInvalidRequest)
@@ -2642,23 +2844,43 @@ func _importHandler(w http.ResponseWriter, r *http.Request, tid, importType, tem
 			importTask.TotalLines = lines
 			importTask.Percentage = 3
 			importTask.LastUpdateTime = time.Now().UTC()
-			clusHelper.PutImportTask(&importTask)
+			_ = clusHelper.PutImportTask(&importTask) // Ignore error because progress update is non-critical
 			kv.SetImporting(1)
 			eps := cacher.GetAllControllerRPCEndpoints(access.NewReaderAccessControl())
 			switch importType {
 			case share.IMPORT_TYPE_CONFIG:
 				value := r.Header.Get("X-As-Standalone")
 				ignoreFed, _ := strconv.ParseBool(value)
-				go cfgHelper.Import(eps, localDev.Ctrler.ID, localDev.Ctrler.ClusterIP, login.domainRoles, importTask,
-					tempToken, revertFedRoles, postImportOp, rpc.PauseResumeStoreWatcher, ignoreFed)
+				go func() {
+					if err := cfgHelper.Import(eps, localDev.Ctrler.ID, localDev.Ctrler.ClusterIP, login.domainRoles, importTask,
+						tempToken, revertFedRoles, postImportOp, rpc.PauseResumeStoreWatcher, ignoreFed); err != nil {
+						log.WithFields(log.Fields{"error": err}).Error("Import")
+					}
+				}()
 			case share.IMPORT_TYPE_GROUP_POLICY:
-				go importGroupPolicy(share.ScopeLocal, login.domainRoles, importTask, postImportOp)
+				go func() {
+					if err := importGroupPolicy(share.ScopeLocal, login.domainRoles, importTask, postImportOp); err != nil {
+						log.WithFields(log.Fields{"error": err}).Error("importGroupPolicy")
+					}
+				}()
 			case share.IMPORT_TYPE_ADMCTRL:
-				go importAdmCtrl(share.ScopeLocal, login.domainRoles, importTask, postImportOp)
+				go func() {
+					if err := importAdmCtrl(share.ScopeLocal, login.domainRoles, importTask, postImportOp); err != nil {
+						log.WithFields(log.Fields{"error": err}).Error("importAdmCtrl")
+					}
+				}()
 			case share.IMPORT_TYPE_DLP:
-				go importDlp(share.ScopeLocal, login.domainRoles, importTask, postImportOp)
+				go func() {
+					if err := importDlp(share.ScopeLocal, login.domainRoles, importTask, postImportOp); err != nil {
+						log.WithFields(log.Fields{"error": err}).Error("importDlp")
+					}
+				}()
 			case share.IMPORT_TYPE_WAF:
-				go importWaf(share.ScopeLocal, login.domainRoles, importTask, postImportOp)
+				go func() {
+					if err := importWaf(share.ScopeLocal, login.domainRoles, importTask, postImportOp); err != nil {
+						log.WithFields(log.Fields{"error": err}).Error("importWaf")
+					}
+				}()
 			case share.IMPORT_TYPE_VULN_PROFILE:
 				option := "merge"
 				query := restParseQuery(r)
@@ -2667,9 +2889,17 @@ func _importHandler(w http.ResponseWriter, r *http.Request, tid, importType, tem
 						option = value
 					}
 				}
-				go importVulnProfile(share.ScopeLocal, option, login.domainRoles, importTask, postImportOp)
+				go func() {
+					if err := importVulnProfile(share.ScopeLocal, option, login.domainRoles, importTask, postImportOp); err != nil {
+						log.WithFields(log.Fields{"error": err}).Error("importVulnProfile")
+					}
+				}()
 			case share.IMPORT_TYPE_COMP_PROFILE:
-				go importCompProfile(share.ScopeLocal, login.domainRoles, importTask, postImportOp)
+				go func() {
+					if err := importCompProfile(share.ScopeLocal, login.domainRoles, importTask, postImportOp); err != nil {
+						log.WithFields(log.Fields{"error": err}).Error("importCompProfile")
+					}
+				}()
 			}
 
 			resp := api.RESTImportTaskData{
@@ -2691,7 +2921,9 @@ func _importHandler(w http.ResponseWriter, r *http.Request, tid, importType, tem
 
 	var msgToken string
 	importTask.Status = err.Error()
-	clusHelper.PutImportTask(&importTask)
+	if err := clusHelper.PutImportTask(&importTask); err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("PutImportTask")
+	}
 	log.WithFields(log.Fields{"error": err, "importType": importType}).Error("Error in import")
 	restRespErrorMessage(w, http.StatusBadRequest, api.RESTErrFailImport, err.Error())
 	switch importType {
@@ -2711,7 +2943,6 @@ func _importHandler(w http.ResponseWriter, r *http.Request, tid, importType, tem
 		msgToken = "compliance profile"
 	}
 	configLog(share.CLUSEvImportFail, login, fmt.Sprintf("Failed to import %s", msgToken))
-	return
 }
 
 func handlerConfigImport(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
@@ -2744,7 +2975,9 @@ func postImportOp(err error, importTask share.CLUSImportTask, loginDomainRoles a
 	var msgToken string
 	switch importType {
 	case share.IMPORT_TYPE_CONFIG:
-		cacher.SyncAdmCtrlStateToK8s(resource.NvAdmSvcName, resource.NvAdmValidatingName, false)
+		if _, err := cacher.SyncAdmCtrlStateToK8s(resource.NvAdmSvcName, resource.NvAdmValidatingName, false); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("PutImportTask")
+		}
 		msgToken = "configurations"
 	case share.IMPORT_TYPE_GROUP_POLICY:
 		msgToken = "group policy"
@@ -2774,7 +3007,9 @@ func postImportOp(err error, importTask share.CLUSImportTask, loginDomainRoles a
 		log.WithFields(log.Fields{"error": err, "importType": importType}).Error("Error in import")
 		configLog(share.CLUSEvImportFail, login, fmt.Sprintf("Failed to import %s(%s)", msgToken, err.Error()))
 		importTask.Status = err.Error()
-		clusHelper.PutImportTask(&importTask)
+		if err := clusHelper.PutImportTask(&importTask); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("PutImportTask")
+		}
 		return
 	}
 
@@ -2787,43 +3022,43 @@ func postImportOp(err error, importTask share.CLUSImportTask, loginDomainRoles a
 
 	if importType == share.IMPORT_TYPE_CONFIG {
 		nvCrdInfo := []*resource.NvCrdInfo{
-			&resource.NvCrdInfo{
+			{
 				RscType:       resource.RscTypeCrdSecurityRule,
 				SpecNamesKind: resource.NvSecurityRuleKind,
 				LockKey:       share.CLUSLockPolicyKey,
 				KvCrdKind:     resource.NvSecurityRuleKind,
 			},
-			&resource.NvCrdInfo{
+			{
 				RscType:       resource.RscTypeCrdClusterSecurityRule,
 				SpecNamesKind: resource.NvClusterSecurityRuleKind,
 				LockKey:       share.CLUSLockPolicyKey,
 				KvCrdKind:     resource.NvSecurityRuleKind,
 			},
-			&resource.NvCrdInfo{
+			{
 				RscType:       resource.RscTypeCrdAdmCtrlSecurityRule,
 				SpecNamesKind: resource.NvAdmCtrlSecurityRuleKind,
 				LockKey:       share.CLUSLockAdmCtrlKey,
 				KvCrdKind:     resource.NvAdmCtrlSecurityRuleKind,
 			},
-			&resource.NvCrdInfo{
+			{
 				RscType:       resource.RscTypeCrdDlpSecurityRule,
 				SpecNamesKind: resource.NvDlpSecurityRuleKind,
 				LockKey:       share.CLUSLockPolicyKey,
 				KvCrdKind:     resource.NvDlpSecurityRuleKind,
 			},
-			&resource.NvCrdInfo{
+			{
 				RscType:       resource.RscTypeCrdWafSecurityRule,
 				SpecNamesKind: resource.NvWafSecurityRuleKind,
 				LockKey:       share.CLUSLockPolicyKey,
 				KvCrdKind:     resource.NvWafSecurityRuleKind,
 			},
-			&resource.NvCrdInfo{
+			{
 				RscType:       resource.RscTypeCrdVulnProfile,
 				SpecNamesKind: resource.NvVulnProfileSecurityRuleKind,
 				LockKey:       share.CLUSLockVulnKey,
 				KvCrdKind:     resource.NvVulnProfileSecurityRuleKind,
 			},
-			&resource.NvCrdInfo{
+			{
 				RscType:       resource.RscTypeCrdCompProfile,
 				SpecNamesKind: resource.NvCompProfileSecurityRuleKind,
 				LockKey:       share.CLUSLockCompKey,
@@ -2831,13 +3066,17 @@ func postImportOp(err error, importTask share.CLUSImportTask, loginDomainRoles a
 			},
 		}
 		for _, crdInfo := range nvCrdInfo {
-			CrossCheckCrd(crdInfo.SpecNamesKind, crdInfo.RscType, crdInfo.KvCrdKind, crdInfo.LockKey, true)
+			if err := CrossCheckCrd(crdInfo.SpecNamesKind, crdInfo.RscType, crdInfo.KvCrdKind, crdInfo.LockKey, true); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("CrossCheckCrd")
+			}
 		}
 	}
 
 	importTask.Percentage = 100
 	importTask.Status = share.IMPORT_DONE
-	clusHelper.PutImportTask(&importTask)
+	if err := clusHelper.PutImportTask(&importTask); err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("PutImportTask")
+	}
 
 	if importType == share.IMPORT_TYPE_CONFIG {
 		kickAllLoginSessionsByServer("")

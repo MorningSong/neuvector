@@ -127,7 +127,6 @@ func scanMutexRUnlock() {
 
 type scanTask struct {
 	id       string
-	timerId  string
 	priority scheduler.Priority
 }
 
@@ -167,7 +166,7 @@ func (t *scanTask) rpcScanRunning(scanner string, info *scanInfo) {
 		var requeue bool
 		scanMutexRLock()
 		if info, ok := scanMap[t.id]; ok {
-			if (info.priority == scheduler.PriorityHigh || scanCfg.AutoScan == true) && info.retry < maxRetry {
+			if (info.priority == scheduler.PriorityHigh || scanCfg.AutoScan) && info.retry < maxRetry {
 				info.retry++
 				cctx.ScanLog.WithFields(log.Fields{
 					"id": t.id, "type": info.objType, "retry": info.retry,
@@ -267,7 +266,7 @@ func enableAutoScan() {
 		}
 		scanMutexUnlock()
 		for _, st := range all {
-			if scanCfg.AutoScan == false {
+			if !scanCfg.AutoScan {
 				break
 			}
 			if st.info.status == statusScanNone || st.info.status == statusScanning {
@@ -416,7 +415,7 @@ func scanRefresh(ctx context.Context, vpf scanUtils.VPFInterface) {
 
 	scanMutexLock()
 	ids := make([]string, len(scanMap))
-	for id, _ := range scanMap {
+	for id := range scanMap {
 		ids[i] = id
 		i++
 	}
@@ -520,6 +519,7 @@ func scanDone(id string, objType share.ScanObjectType, report *share.CLUSScanRep
 	}
 	scanMutexUnlock()
 
+	reportedVuls := report.Vuls
 	if ok && dbAssetVul != nil {
 		dbAssetVul.Vuls = report.Vuls
 		dbAssetVul.Modules = report.Modules
@@ -541,7 +541,7 @@ func scanDone(id string, objType share.ScanObjectType, report *share.CLUSScanRep
 
 	// all controller should call auditUpdate to record the log, the leader will take action
 	if alives != nil {
-		clog := scanReport2ScanLog(id, objType, report, criticals, highs, meds, nil, nil, nil, "")
+		clog := scanReport2ScanLog(id, objType, report, reportedVuls, criticals, highs, meds, nil, nil, nil, "")
 		syncLock(syncCatgAuditIdx)
 		auditUpdate(id, share.EventCVEReport, objType, clog, alives, fixedCriticalsInfo, fixedHighsInfo)
 		syncUnlock(syncCatgAuditIdx)
@@ -599,27 +599,34 @@ func (m CacheMethod) GetAllScanners(acc *access.AccessControl) []*api.RESTScanne
 	return scanners
 }
 
-func addScanner(id string) {
-	scanScher.AddProcessor(id)
+func addScanner(id string) error {
+	return scanScher.AddProcessor(id)
 }
 
-func removeScanner(id string) {
-	scanScher.DelProcessor(id)
+func removeScanner(id string) error {
+	_, err := scanScher.DelProcessor(id)
+	return err
 }
 
 func scannerDBChange(newVer string) {
-	if isScanner() == false {
+	if !isScanner() {
 		return
 	}
 
-	if scanCfg.AutoScan == false {
+	if !scanCfg.AutoScan {
 		return
 	}
 
 	go func() {
 		scanMutexLock()
 		for id, info := range scanMap {
-			if info.status == statusScanNone && info.version != newVer {
+			if info.version == newVer { // no need for new scan
+				continue
+			}
+			if info.status == statusScanning || info.status == statusScanNone {
+				if info.status == statusScanning {
+					scanScher.DeleteTask(id, scheduler.PriorityLow)
+				}
 				info.status = statusScanScheduled
 				info.priority = scheduler.PriorityLow
 				info.retry = 0
@@ -719,8 +726,8 @@ func scanMapDelete(taskId string) {
 			key = share.CLUSScanDataPlatformKey(taskId)
 			skey = share.CLUSScanStatePlatformKey(taskId)
 		}
-		cluster.Delete(key)
-		cluster.Delete(skey)
+		_ = cluster.Delete(key)
+		_ = cluster.Delete(skey)
 	}
 }
 
@@ -731,7 +738,7 @@ func scanWorkloadAdd(id string, param interface{}) {
 	workload := cache.workload
 	if !common.OEMIgnoreWorkload(workload) {
 		// Use DisplayName for image
-		idns := []api.RESTIDName{api.RESTIDName{Domains: []string{workload.Domain}, DisplayName: workload.Image}}
+		idns := []api.RESTIDName{{Domains: []string{workload.Domain}, DisplayName: workload.Image}}
 		scanMapAdd(id, workload.AgentID, idns, share.ScanObjectType_CONTAINER)
 		// Read bench checks into cache in case its notification came earlier
 		benchStateHandler(cluster.ClusterNotifyAdd, share.CLUSBenchStateWorkloadKey(id), nil)
@@ -841,7 +848,7 @@ func updateScanState(id string, nType share.ScanObjectType, status string) {
 		state.ScannedAt = time.Now().UTC()
 	}
 	value, _ := json.Marshal(state)
-	cluster.Put(skey, value)
+	_ = cluster.Put(skey, value)
 }
 
 func scanStateHandler(nType cluster.ClusterNotifyType, key string, value []byte) {
@@ -921,7 +928,7 @@ func registryStateHandler(nType cluster.ClusterNotifyType, key string, value []b
 	switch nType {
 	case cluster.ClusterNotifyAdd, cluster.ClusterNotifyModify:
 		var state share.CLUSRegistryState
-		json.Unmarshal(value, &state)
+		_ = json.Unmarshal(value, &state)
 		scan.RegistryStateUpdate(name, &state)
 	case cluster.ClusterNotifyDelete:
 		// State is deleted when registry deleted. No handling here.
@@ -949,7 +956,7 @@ func registryImageStateHandler(nType cluster.ClusterNotifyType, key string, valu
 	switch nType {
 	case cluster.ClusterNotifyAdd, cluster.ClusterNotifyModify:
 		var sum share.CLUSRegistryImageSummary
-		json.Unmarshal(value, &sum)
+		_ = json.Unmarshal(value, &sum)
 
 		if fedRole == api.FedRoleJoint && strings.HasPrefix(name, api.FederalGroupPrefix) && (name != common.RegistryFedRepoScanName) {
 			// when a new fed registry with its image scan result are deployed to a worker cluster, it's possible that
@@ -977,7 +984,7 @@ func registryImageStateHandler(nType cluster.ClusterNotifyType, key string, valu
 				// for any scan report on master/standalone cluster & non-fed scan report on managed cluster
 				if fedRole != api.FedRoleJoint || !strings.HasPrefix(name, api.FederalGroupPrefix) {
 					if alives != nil {
-						clog := scanReport2ScanLog(id, share.ScanObjectType_IMAGE, report, criticals, highs, meds, layerCriticals, layerHighs, layerMeds, name)
+						clog := scanReport2ScanLog(id, share.ScanObjectType_IMAGE, report, report.Vuls, criticals, highs, meds, layerCriticals, layerHighs, layerMeds, name)
 						syncLock(syncCatgAuditIdx)
 						auditUpdate(id, share.EventCVEReport, share.ScanObjectType_IMAGE, clog, alives, fixedCriticalsInfo, fixedHighsInfo)
 						syncUnlock(syncCatgAuditIdx)
@@ -1042,7 +1049,7 @@ func fedScanRevsHandler(nType cluster.ClusterNotifyType, key string, value []byt
 	switch nType {
 	case cluster.ClusterNotifyAdd, cluster.ClusterNotifyModify:
 		var scanDataRevs share.CLUSFedScanRevisions
-		json.Unmarshal(value, &scanDataRevs)
+		_ = json.Unmarshal(value, &scanDataRevs)
 		fedScanDataRevsCache = scanDataRevs
 
 	case cluster.ClusterNotifyDelete:
@@ -1096,12 +1103,20 @@ func ScannerUpdateHandler(nType cluster.ClusterNotifyType, key string, value []b
 
 				if !s.BuiltIn {
 					rpc.AddScanner(&s)
-					scan.AddScanner(s.ID)
-					addScanner(s.ID)
+					if err := scan.AddScanner(s.ID); err != nil {
+						log.WithError(err).Warn("failed to add scanner to reg scheduler")
+					}
+					if err := addScanner(s.ID); err != nil {
+						log.WithError(err).Warn("failed to add scanner to scheduler")
+					}
 				} else if s.ID == localDev.Ctrler.ID {
 					rpc.AddScanner(&s)
-					scan.AddScanner(s.ID)
-					addScanner(s.ID)
+					if err := scan.AddScanner(s.ID); err != nil {
+						log.WithError(err).Warn("failed to add scanner to reg scheduler")
+					}
+					if err := addScanner(s.ID); err != nil {
+						log.WithError(err).Warn("failed to add scanner to scheduler")
+					}
 				}
 			}
 		}
@@ -1117,8 +1132,12 @@ func ScannerUpdateHandler(nType cluster.ClusterNotifyType, key string, value []b
 			cacheMutexUnlock()
 
 			rpc.RemoveScanner(id)
-			scan.RemoveScanner(id)
-			removeScanner(id)
+			if err := scan.RemoveScanner(id); err != nil {
+				log.WithError(err).Warn("failed to remove scanner from reg scheduler")
+			}
+			if err := removeScanner(id); err != nil {
+				log.WithError(err).Warn("failed to remove scanner from scheduler")
+			}
 		}
 	}
 }
@@ -1154,7 +1173,7 @@ func scanLicenseUpdate(id string, param interface{}) {
 	cacheMutexRUnlock()
 
 	for id, m := range wls {
-		idns := []api.RESTIDName{api.RESTIDName{Domains: []string{m.d}}}
+		idns := []api.RESTIDName{{Domains: []string{m.d}}}
 		scanMapAdd(id, m.a, idns, share.ScanObjectType_CONTAINER)
 	}
 	for id, a := range hosts {
@@ -1265,7 +1284,7 @@ func rescaleScanner(autoscaleCfg share.CLUSSystemConfigAutoscale, totalScanners 
 							ReportedAt: time.Now().UTC(),
 						}
 						clog.Msg = "Scanner autoscale is disabled because someone reverted the scaling for 3 continous times."
-						cctx.EvQueue.Append(&clog)
+						_ = cctx.EvQueue.Append(&clog)
 						skipScale = true
 						log.Info(clog.Msg)
 					} else {
@@ -1310,7 +1329,7 @@ func (m CacheMethod) GetScanConfig(acc *access.AccessControl) (*api.RESTScanConf
 	}
 
 	var cfg *api.RESTScanConfig
-	if scanCfg.AutoScan == true {
+	if scanCfg.AutoScan {
 		cfg = &api.RESTScanConfig{AutoScan: true}
 	} else {
 		cfg = &api.RESTScanConfig{AutoScan: false}
@@ -1478,7 +1497,6 @@ func getWorkloadDbAssetVul(c *workloadCache, criticals, highs, meds, lows []stri
 		d.W_applications = string(b)
 	}
 
-	d.Policy_mode, _ = getWorkloadPerGroupPolicyMode(c)
 	d.Scanned_at = api.RESTTimeString(lastScanTime.UTC())
 	return d
 }
@@ -1499,7 +1517,6 @@ func getHostDbAssetVul(c *hostCache, criticals, highs, meds, lows []string, last
 		N_containers: c.workloads.Cardinality(),
 	}
 
-	d.Policy_mode, _ = getHostPolicyMode(c)
 	d.Scanned_at = api.RESTTimeString(lastScanTime.UTC())
 	return d
 }

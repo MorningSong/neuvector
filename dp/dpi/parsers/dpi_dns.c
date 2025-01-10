@@ -277,7 +277,7 @@ static int dns_question(dpi_packet_t *p, uint8_t *ptr, int len, int shift, int c
 
         if (type == DNS_TYPE_A && questions != NULL) {
             if (jump > 1) {
-                strcpy(questions[(*qt_count)++].question, labels);
+                strlcpy(questions[(*qt_count)++].question, labels, MAX_LABEL_LEN);
             }
         }else if (type == DNS_TYPE_AXFR) {
             DEBUG_LOG(DBG_PARSER, p, "DNS Zone Transfer AXFR.\n");
@@ -323,7 +323,7 @@ static int dns_answer(dpi_packet_t *p, uint8_t *ptr, int len, int shift, int cou
         //ipv4 address
         if (type == DNS_TYPE_A && rd_len == 4 && answers != NULL) {
             if (jump > 1) {
-                strcpy(answers[*aw_count].question, labels);
+                strlcpy(answers[*aw_count].question, labels, MAX_LABEL_LEN);
                 uint8_t *addr = ptr + shift;
                 memcpy(&answers[*aw_count].ip4, addr, 4);
                 answers[*aw_count].ip = true;
@@ -334,8 +334,8 @@ static int dns_answer(dpi_packet_t *p, uint8_t *ptr, int len, int shift, int cou
             if (jump > 1) {
                 int ret = get_dns_name(p, ptr, len, shift, cname);
                 if (ret > 1) {
-                    strcpy(answers[*aw_count].question, labels);
-                    strcpy(answers[*aw_count].cname, cname);
+                    strlcpy(answers[*aw_count].question, labels, MAX_LABEL_LEN);
+                    strlcpy(answers[*aw_count].cname, cname, MAX_LABEL_LEN);
                     answers[*aw_count].ip = false;
                     (*aw_count)++;
                 }
@@ -387,8 +387,13 @@ static int dns_parser(dpi_packet_t *p, uint8_t *ptr, uint32_t len)
 
     //limit the question and answer max number in case of wrong dns type
     if ((qd + an) < MAX_RECORD_NUM) {
-        questions = calloc(qd, sizeof(dns_question_t));
-        answers = calloc(an, sizeof(dns_answer_t));
+        if (qd > 0) {
+            questions = calloc(qd, sizeof(dns_question_t));
+        }
+        if (an > 0) {
+            answers = calloc(an, sizeof(dns_answer_t));
+        }
+
         if ((questions == NULL) ^ (answers == NULL)) {
             free(questions);
             free(answers);
@@ -425,7 +430,7 @@ static int dns_parser(dpi_packet_t *p, uint8_t *ptr, uint32_t len)
         }
     }
 
-    if (qt_count > 0 && aw_count > 0) {
+    if (qt_count > 0 && aw_count > 0 && questions != NULL && answers != NULL) {
         get_domain_ip_mapping(p, questions, qd, answers, an);
     }
     if (questions != NULL){
@@ -601,21 +606,21 @@ static void dns_udp_new_session(dpi_packet_t *p)
 }
 
 static dpi_parser_t dpi_parser_dns_tcp = {
-    new_session: dns_tcp_new_session,
-    delete_data: dns_tcp_delete_data,
-    parser:      dns_tcp_parser,
-    name:        "dns",
-    ip_proto:    IPPROTO_TCP,
-    type:        DPI_PARSER_DNS,
+    .new_session = dns_tcp_new_session,
+    .delete_data = dns_tcp_delete_data,
+    .parser = dns_tcp_parser,
+    .name = "dns",
+    .ip_proto = IPPROTO_TCP,
+    .type = DPI_PARSER_DNS,
 };
 
 static dpi_parser_t dpi_parser_dns_udp = {
-    new_session: dns_udp_new_session,
-    delete_data: NULL,
-    parser:      dns_udp_parser,
-    name:        "dns",
-    ip_proto:    IPPROTO_UDP,
-    type:        DPI_PARSER_DNS,
+    .new_session = dns_udp_new_session,
+    .delete_data = NULL,
+    .parser = dns_udp_parser,
+    .name = "dns",
+    .ip_proto = IPPROTO_UDP,
+    .type = DPI_PARSER_DNS,
 };
 
 dpi_parser_t *dpi_dns_tcp_parser(void)

@@ -82,6 +82,8 @@ func replaceFedFileMonitorProfiles(profiles []*share.CLUSFileMonitorProfile, acc
 	txn := cluster.Transact()
 	defer txn.Close()
 
+	var hasError bool
+
 	existing := clusHelper.GetAllFileMonitorProfileSubKeys(share.ScopeFed)
 	for _, profile := range profiles {
 		var fmp *share.CLUSFileMonitorProfile
@@ -89,7 +91,11 @@ func replaceFedFileMonitorProfiles(profiles []*share.CLUSFileMonitorProfile, acc
 			fmp, _ = clusHelper.GetFileMonitorProfile(profile.Group)
 		}
 		if fmp == nil || !reflect.DeepEqual(profile, fmp) { // not found in existing or it's different/modified
-			clusHelper.PutFileMonitorProfileTxn(txn, profile.Group, profile)
+			if err := clusHelper.PutFileMonitorProfileTxn(txn, profile.Group, profile); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("PutFileMonitorProfileTxn")
+				hasError = true
+				break
+			}
 		}
 		if existing.Contains(profile.Group) {
 			existing.Remove(profile.Group)
@@ -97,7 +103,11 @@ func replaceFedFileMonitorProfiles(profiles []*share.CLUSFileMonitorProfile, acc
 	}
 	// delete obsolete file monitor profile keys
 	for name := range existing.Iter() {
-		clusHelper.DeleteFileMonitorTxn(txn, name.(string))
+		if err := clusHelper.DeleteFileMonitorTxn(txn, name.(string)); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("DeleteFileMonitorTxn")
+			hasError = true
+			break
+		}
 	}
 
 	existing = clusHelper.GetAllFileAccessRuleSubKeys(share.ScopeFed)
@@ -107,7 +117,11 @@ func replaceFedFileMonitorProfiles(profiles []*share.CLUSFileMonitorProfile, acc
 			far, _ = clusHelper.GetFileAccessRule(accessRule.Group)
 		}
 		if far == nil || !reflect.DeepEqual(accessRule, far) { // not found in existing or it's different/modified
-			clusHelper.PutFileAccessRuleTxn(txn, accessRule.Group, accessRule)
+			if err := clusHelper.PutFileAccessRuleTxn(txn, accessRule.Group, accessRule); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("PutFileAccessRuleTxn")
+				hasError = true
+				break
+			}
 		}
 		if existing.Contains(accessRule.Group) {
 			existing.Remove(accessRule.Group)
@@ -118,8 +132,13 @@ func replaceFedFileMonitorProfiles(profiles []*share.CLUSFileMonitorProfile, acc
 		clusHelper.DeleteFileAccessRuleTxn(txn, name.(string))
 	}
 
+	if hasError {
+		return false
+	}
+
 	if ok, err := txn.Apply(); err != nil || !ok {
 		log.WithFields(log.Fields{"ok": ok, "error": err}).Error("Atomic write to the cluster failed")
+		return false
 	}
 
 	return true
@@ -260,9 +279,7 @@ func handlerFileMonitorConfig(w http.ResponseWriter, r *http.Request, ps httprou
 			// add rule
 			idx := utils.FilterIndexKey(flt.Path, flt.Regex)
 			capps := make([]string, len(filter.Apps))
-			for j, app := range filter.Apps {
-				capps[j] = app
-			}
+			copy(capps, filter.Apps)
 			frule := &share.CLUSFileAccessFilterRule{
 				Apps:        capps,
 				CreatedAt:   tm,
@@ -286,9 +303,7 @@ func handlerFileMonitorConfig(w http.ResponseWriter, r *http.Request, ps httprou
 					// update the rule
 					idx := utils.FilterIndexKey(cfilter.Path, cfilter.Regex)
 					capps := make([]string, len(filter.Apps))
-					for j, app := range filter.Apps {
-						capps[j] = app
-					}
+					copy(capps, filter.Apps)
 
 					frule := &share.CLUSFileAccessFilterRule{
 						Apps:        capps,
@@ -352,9 +367,9 @@ func handlerFileMonitorList(w http.ResponseWriter, r *http.Request, ps httproute
 
 	var predefined bool
 	query := restParseQuery(r)
-	scope, _ := query.pairs[api.QueryScope] // empty string means fed & local file mointor list
+	scope := query.pairs[api.QueryScope] // empty string means fed & local file mointor list
 
-	for key, _ := range r.URL.Query() {
+	for key := range r.URL.Query() {
 		if strings.Contains(key, api.FilterByPredefined) {
 			predefined = true
 			break
@@ -387,7 +402,7 @@ func handlerFileMonitorShow(w http.ResponseWriter, r *http.Request, ps httproute
 	var predefined bool
 	name := ps.ByName("name")
 	query := r.URL.Query()
-	for key, _ := range query {
+	for key := range query {
 		if strings.Contains(key, api.FilterByPredefined) {
 			predefined = true
 			break

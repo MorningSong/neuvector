@@ -33,13 +33,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/types"
 
-	"github.com/neuvector/neuvector/controller/access"
 	"github.com/neuvector/neuvector/controller/api"
 	admission "github.com/neuvector/neuvector/controller/nvk8sapi/nvvalidatewebhookcfg"
 	nvsysadmission "github.com/neuvector/neuvector/controller/nvk8sapi/nvvalidatewebhookcfg/admission"
 	"github.com/neuvector/neuvector/controller/opa"
 	"github.com/neuvector/neuvector/controller/resource"
-	"github.com/neuvector/neuvector/controller/rpc"
 	"github.com/neuvector/neuvector/share"
 	"github.com/neuvector/neuvector/share/global"
 	"github.com/neuvector/neuvector/share/scan/secrets"
@@ -51,10 +49,10 @@ const (
 	tlsClientCA = "/var/neuvector/clientCA.cert.pem"
 )
 
-const (
-	admissionWebhookAnnotationStatusKey = "neuvector-mutating-admission-webhook/status"
-	admissionWebhookLabelKey            = "neuvector-mutating-admission-webhook/label"
-)
+// const (
+// 	admissionWebhookAnnotationStatusKey = "neuvector-mutating-admission-webhook/status"
+// 	admissionWebhookLabelKey            = "neuvector-mutating-admission-webhook/label"
+// )
 
 const errFmtUnmarshall = "could not unmarshal raw %s object"
 
@@ -121,21 +119,11 @@ const (
 )
 
 var sidecarImages = []*ContainerImage{
-	&ContainerImage{registry: "https://gcr.io/", imageRepo: "istio-release/proxyv2"},
-	&ContainerImage{registry: "https://gcr.io/", imageRepo: "linkerd-io/proxy"},
-	&ContainerImage{registry: "https://docker.io/", imageRepo: "istio/proxyv2"},
+	{registry: "https://gcr.io/", imageRepo: "istio-release/proxyv2"},
+	{registry: "https://gcr.io/", imageRepo: "linkerd-io/proxy"},
+	{registry: "https://docker.io/", imageRepo: "istio/proxyv2"},
 }
 
-/*
-	func init() {
-		_ = corev1.AddToScheme(runtimeScheme)
-		_ = admissionregistrationv1beta1.AddToScheme(runtimeScheme)
-		// defaulting with webhooks:
-		// https://github.com/kubernetes/kubernetes/issues/57982
-		_ = appsv1.AddToScheme(runtimeScheme)
-		_ = batchv1beta1.AddToScheme(runtimeScheme)
-	}
-*/
 func checkAggrLogsCache(alwaysFlush bool) {
 	var err error
 	aggrLogsCacheMutex.Lock()
@@ -151,7 +139,9 @@ func checkAggrLogsCache(alwaysFlush bool) {
 						alog.ReportedAt = time.Now().UTC()
 					}
 					delete(alog.Props, nvsysadmission.AuditLogPropLastLogAt)
-					auditQueue.Append(alog)
+					if err := auditQueue.Append(alog); err != nil {
+						log.WithFields(log.Fields{"error": err}).Error("auditQueue.Append")
+					}
 				}
 			}
 		} else {
@@ -542,7 +532,9 @@ func parsePodSpec(objectMeta *metav1.ObjectMeta, spec *corev1.PodSpec) ([3][]*nv
 			}
 			admContainerInfo.Name = c.Name
 			admContainerInfo.Image = c.Image
-			parseReqImageName(admContainerInfo)
+			if err := parseReqImageName(admContainerInfo); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("parseReqImageName")
+			}
 			isSidecar := false
 			for imageRegistry := range admContainerInfo.ImageRegistry.Iter() {
 				for _, sidecar := range sidecarImages {
@@ -683,17 +675,15 @@ func parseAdmRequest(req *admissionv1beta1.AdmissionRequest, objectMeta *metav1.
 	var allContainers [3][]*nvsysadmission.AdmContainerInfo
 	var saName string
 	if podSpec != nil {
-		switch podSpec.(type) {
+		switch ps := podSpec.(type) {
 		case *corev1.PodTemplateSpec:
-			podTemplateSpec, _ := podSpec.(*corev1.PodTemplateSpec)
-			allContainers, _ = parsePodSpec(objectMeta, &podTemplateSpec.Spec)
-			specLabels = podTemplateSpec.ObjectMeta.Labels
-			specAnnotations = podTemplateSpec.ObjectMeta.Annotations
-			saName = podTemplateSpec.Spec.ServiceAccountName
+			allContainers, _ = parsePodSpec(objectMeta, &ps.Spec)
+			specLabels = ps.ObjectMeta.Labels
+			specAnnotations = ps.ObjectMeta.Annotations
+			saName = ps.Spec.ServiceAccountName
 		case *corev1.PodSpec:
-			podSpec, _ := podSpec.(*corev1.PodSpec)
-			allContainers, _ = parsePodSpec(objectMeta, podSpec)
-			saName = podSpec.ServiceAccountName
+			allContainers, _ = parsePodSpec(objectMeta, ps)
+			saName = ps.ServiceAccountName
 		default:
 			return nil, errors.New("unsupported podSpec type")
 		}
@@ -942,7 +932,10 @@ func cacheAdmCtrlAudit(auditId share.TLogAudit, reqResult *nvsysadmission.AdmCtr
 			_, alog = aggregateDenyLogs(reqResult, admResObject.OwnerUIDs[0], alog)
 		}
 		if alog != nil {
-			auditQueue.Append(alog)
+			if err := auditQueue.Append(alog); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("auditQueue.Append")
+				return err
+			}
 		}
 	}
 
@@ -1141,7 +1134,7 @@ func (whsvr *WebhookServer) validate(ar *admissionv1beta1.AdmissionReview, globa
 	stamps.Parsed = time.Now()
 
 	totalContainers := 0
-	{
+	if admResObject != nil {
 		reqImages := make([]string, 0, len(admResObject.AllContainers))
 		for _, containers := range admResObject.AllContainers {
 			for _, c := range containers {
@@ -1275,7 +1268,9 @@ func (whsvr *WebhookServer) validate(ar *admissionv1beta1.AdmissionReview, globa
 		if len(violatedContainers) > 0 {
 			reqEvalResult.Msg = fmt.Sprintf("%s%s of Kubernetes %s resource (%s) violates Admission Control monitor-mode rule(s). %s%s",
 				msgHeader, opDisplay, req.Kind.Kind, admResObject.Name, strings.Join(violatedContainers, " "), unscannedImagesMsg)
-			cacheAdmCtrlAudit(share.CLUSAuditAdmCtrlK8sReqViolation, &reqEvalResult, nil, nil, admResObject)
+			if err := cacheAdmCtrlAudit(share.CLUSAuditAdmCtrlK8sReqViolation, &reqEvalResult, nil, nil, admResObject); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("cacheAdmCtrlAudit")
+			}
 		}
 
 		if reqEvalResult.ReqAction != "" {
@@ -1290,7 +1285,9 @@ func (whsvr *WebhookServer) validate(ar *admissionv1beta1.AdmissionReview, globa
 				}
 				reqEvalResult.Msg = fmt.Sprintf("%s%s of Kubernetes %s resource (%s) is denied because of %sdeny rule id %d with criteria: %s.%s",
 					msgHeader, opDisplay, req.Kind.Kind, admResObject.Name, ruleScope, criticalMatch.RuleID, criticalMatch.RuleDetails, unscannedImagesMsg)
-				cacheAdmCtrlAudit(share.CLUSAuditAdmCtrlK8sReqDenied, &reqEvalResult, criticalAssessment, &criticalMatch.ImageInfo, admResObject)
+				if err := cacheAdmCtrlAudit(share.CLUSAuditAdmCtrlK8sReqDenied, &reqEvalResult, criticalAssessment, &criticalMatch.ImageInfo, admResObject); err != nil {
+					log.WithFields(log.Fields{"error": err}).Error("cacheAdmCtrlAudit")
+				}
 			} else {
 				allowedContainers := make([]string, 0, 4) // containers that explicitly match allow rule
 				for _, assessResult := range reqEvalResult.AssessResults {
@@ -1312,13 +1309,17 @@ func (whsvr *WebhookServer) validate(ar *admissionv1beta1.AdmissionReview, globa
 					criticalAssessment = nil
 					matchedImageInfo = nil
 				}
-				cacheAdmCtrlAudit(share.CLUSAuditAdmCtrlK8sReqAllowed, &reqEvalResult, criticalAssessment, matchedImageInfo, admResObject)
+				if err := cacheAdmCtrlAudit(share.CLUSAuditAdmCtrlK8sReqAllowed, &reqEvalResult, criticalAssessment, matchedImageInfo, admResObject); err != nil {
+					log.WithFields(log.Fields{"error": err}).Error("cacheAdmCtrlAudit")
+				}
 			}
 		} else {
 			// doesn't match any rule
 			reqEvalResult.Msg = fmt.Sprintf("%s%s of Kubernetes %s resource (%s) is allowed because it doesn't match any decisive rule.%s",
 				msgHeader, opDisplay, req.Kind.Kind, admResObject.Name, unscannedImagesMsg)
-			cacheAdmCtrlAudit(share.CLUSAuditAdmCtrlK8sReqAllowed, &reqEvalResult, nil, nil, admResObject)
+			if err := cacheAdmCtrlAudit(share.CLUSAuditAdmCtrlK8sReqAllowed, &reqEvalResult, nil, nil, admResObject); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("cacheAdmCtrlAudit")
+			}
 		}
 	}
 
@@ -1358,7 +1359,9 @@ func (whsvr *WebhookServer) serveK8s(w http.ResponseWriter, r *http.Request, adm
 
 		if admType == admission.NvAdmValidateType {
 			admissionResponse, _, ignoredReq = whsvr.validate(&ar, globalMode, defaultAction, stamps, false)
-			admissionResponse.UID = ar.Request.UID
+			if admissionResponse != nil {
+				admissionResponse.UID = ar.Request.UID
+			}
 		} else {
 			log.WithFields(log.Fields{"path": r.URL.Path}).Debug("unsupported path")
 			http.Error(w, "unsupported", http.StatusNotImplemented)
@@ -1464,7 +1467,7 @@ func (whsvr *WebhookServer) serve(w http.ResponseWriter, r *http.Request) {
 
 	stamps.Start = time.Now()
 	whsvr.serveWithTimeStamps(w, r, &stamps)
-	diff := time.Now().Sub(stamps.Start)
+	diff := time.Since(stamps.Start)
 	if diff.Seconds() >= 28 {
 		log.WithFields(log.Fields{"image": stamps.Images, "seconds": diff.Seconds(),
 			"fetch": stamps.Fetched.Sub(stamps.GonnaFetch).Seconds()}).Warn("unexpected")
@@ -1511,7 +1514,9 @@ func restartWebhookServer(svcName string) error {
 	}
 	if leader := atomic.LoadUint32(&_isLeader); leader == 1 {
 		if nvAdmName, ok := k8sInfo[svcName]; ok {
-			cacher.SyncAdmCtrlStateToK8s(svcName, nvAdmName, false)
+			if _, err := cacher.SyncAdmCtrlStateToK8s(svcName, nvAdmName, false); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("SyncAdmCtrlStateToK8s")
+			}
 		}
 	}
 
@@ -1682,8 +1687,9 @@ func scanEnvVarSecrets(vars map[string]string) []share.ScanSecretLog {
 	}
 
 	var envVars string
+	delim := " = "
 	for k, v := range vars {
-		pair := fmt.Sprintf("%v = %v\n", k, v)
+		pair := fmt.Sprintf("%v%s%v\n", k, delim, v)
 		envVars = envVars + pair
 		//	log.WithFields(log.Fields{"pair": pair}).Debug()
 	}
@@ -1709,6 +1715,18 @@ func scanEnvVarSecrets(vars map[string]string) []share.ScanSecretLog {
 		}
 		subject += "..."
 
+		if idx := strings.Index(l.Line, delim); idx >= 0 {
+			if k := l.Line[0:idx]; k != "" {
+				if _, ok := vars[k]; ok {
+					if strings.HasPrefix(subject, delim) {
+						subject = fmt.Sprintf("%s=%s", k, subject[len(delim):])
+					} else {
+						subject = fmt.Sprintf("%s=%s", k, subject)
+					}
+				}
+			}
+		}
+
 		slogs[i] = share.ScanSecretLog{
 			Type:       l.Type,
 			Text:       subject, // description
@@ -1720,22 +1738,22 @@ func scanEnvVarSecrets(vars map[string]string) []share.ScanSecretLog {
 	return slogs
 }
 
-func updateToOtherControllers(docKey string, jsonData string) {
-	// call grpc
-	info := share.CLUSKubernetesResInfo{
-		DocKey: docKey,
-		Data:   jsonData,
-	}
+// func updateToOtherControllers(docKey string, jsonData string) {
+// 	// call grpc
+// 	info := share.CLUSKubernetesResInfo{
+// 		DocKey: docKey,
+// 		Data:   jsonData,
+// 	}
 
-	eps := cacher.GetAllControllerRPCEndpoints(access.NewReaderAccessControl())
-	for _, ep := range eps {
-		log.WithFields(log.Fields{"ep.ClusterIP": ep.ClusterIP, "ClusterIP": localDev.Ctrler.ClusterIP}).Debug("updateToOtherControllers(grpc-client)")
+// 	eps := cacher.GetAllControllerRPCEndpoints(access.NewReaderAccessControl())
+// 	for _, ep := range eps {
+// 		log.WithFields(log.Fields{"ep.ClusterIP": ep.ClusterIP, "ClusterIP": localDev.Ctrler.ClusterIP}).Debug("updateToOtherControllers(grpc-client)")
 
-		if ep.ClusterIP != localDev.Ctrler.ClusterIP {
-			go rpc.ReportK8SResToOPA(ep.ClusterIP, ep.RPCServerPort, info)
-		}
-	}
-}
+// 		if ep.ClusterIP != localDev.Ctrler.ClusterIP {
+// 			go rpc.ReportK8SResToOPA(ep.ClusterIP, ep.RPCServerPort, info)
+// 		}
+// 	}
+// }
 
 func ReportK8SResToOPA(info *share.CLUSKubernetesResInfo) {
 	docKey := info.DocKey

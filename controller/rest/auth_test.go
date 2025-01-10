@@ -104,14 +104,16 @@ func makeLocalUserWithRole(username, password, role string, roleDomains map[stri
 
 func getLoginToken(w *mockResponseWriter) string {
 	var data api.RESTTokenData
-	json.Unmarshal(w.body, &data)
+	_ = json.Unmarshal(w.body, &data)
 	return data.Token.Token
 }
 
 func checkUserAttrs(w *mockResponseWriter, server, user, role string, tmo uint32) error {
 	// Check returned User attributes
 	var data api.RESTTokenData
-	json.Unmarshal(w.body, &data)
+	if err := json.Unmarshal(w.body, &data); err != nil {
+		return fmt.Errorf("Error in unmarshal: %v", err)
+	}
 	if data.Token.Server != server || data.Token.Username != user || data.Token.Role != role {
 		return fmt.Errorf("Error in user attributes: %+v", *data.Token)
 	}
@@ -138,7 +140,9 @@ func TestLocalLogin(t *testing.T) {
 	clusHelper = &mockCluster
 
 	user := makeLocalUser("user", "pass", api.UserRoleReader)
-	clusHelper.CreateUser(user)
+	if err := clusHelper.CreateUser(user); err != nil {
+		t.Errorf("CreateUser error: %v", err)
+	}
 
 	cacher = &mockCache{}
 
@@ -175,7 +179,7 @@ func TestLDAPLogin(t *testing.T) {
 		LDAP: &share.CLUSServerLDAP{
 			CLUSServerAuth: share.CLUSServerAuth{
 				GroupMappedRoles: []*share.GroupRoleMapping{
-					&share.GroupRoleMapping{
+					{
 						Group:       "group1",
 						GlobalRole:  api.UserRoleReader,
 						RoleDomains: make(map[string][]string),
@@ -184,7 +188,9 @@ func TestLDAPLogin(t *testing.T) {
 			},
 		},
 	}
-	clusHelper.PutServerRev(&ldap, 0)
+	if err := clusHelper.PutServerRev(&ldap, 0); err != nil {
+		t.Errorf("PutServerRev error: %v", err)
+	}
 
 	mockAuther := mockRemoteAuth{users: make(map[string]*passwordUser)}
 	// User group membership doesn't match role group mapping
@@ -219,7 +225,9 @@ func TestLDAPLogin(t *testing.T) {
 	// Revert user group membership, add default role to server
 	mockAuther.addPasswordUser("user", "pass", []string{"group2"})
 	ldap.LDAP.DefaultRole = api.UserRoleAdmin
-	clusHelper.PutServerRev(&ldap, 0)
+	if err := clusHelper.PutServerRev(&ldap, 0); err != nil {
+		t.Errorf("PutServerRev error: %v", err)
+	}
 
 	w = login("user", "pass")
 	if w.status != http.StatusOK {
@@ -383,7 +391,9 @@ func TestLocalLoginServer(t *testing.T) {
 	clusHelper = &mockCluster
 
 	user := makeLocalUser("user", "pass", api.UserRoleAdmin)
-	clusHelper.CreateUser(user)
+	if err := clusHelper.CreateUser(user); err != nil {
+		t.Errorf("CreateUser error: %v", err)
+	}
 
 	cacher = &mockCache{}
 
@@ -427,7 +437,7 @@ func TestLDAPLoginServer(t *testing.T) {
 		LDAP: &share.CLUSServerLDAP{
 			CLUSServerAuth: share.CLUSServerAuth{
 				GroupMappedRoles: []*share.GroupRoleMapping{
-					&share.GroupRoleMapping{
+					{
 						Group:       "group1",
 						GlobalRole:  api.UserRoleReader,
 						RoleDomains: make(map[string][]string),
@@ -436,7 +446,9 @@ func TestLDAPLoginServer(t *testing.T) {
 			},
 		},
 	}
-	clusHelper.PutServerRev(&ldap, 0)
+	if err := clusHelper.PutServerRev(&ldap, 0); err != nil {
+		t.Errorf("PutServerRev error: %v", err)
+	}
 
 	mockAuther := mockRemoteAuth{users: make(map[string]*passwordUser)}
 	// User group membership doesn't match role group mapping
@@ -476,7 +488,7 @@ func TestSAMLLogin(t *testing.T) {
 		LDAP: &share.CLUSServerLDAP{
 			CLUSServerAuth: share.CLUSServerAuth{
 				GroupMappedRoles: []*share.GroupRoleMapping{
-					&share.GroupRoleMapping{
+					{
 						Group:       "group1",
 						GlobalRole:  api.UserRoleReader,
 						RoleDomains: make(map[string][]string),
@@ -485,7 +497,9 @@ func TestSAMLLogin(t *testing.T) {
 			},
 		},
 	}
-	clusHelper.PutServerRev(&ldap, 0)
+	if err := clusHelper.PutServerRev(&ldap, 0); err != nil {
+		t.Errorf("PutServerRev error: %v", err)
+	}
 
 	// Not enabled
 	saml := share.CLUSServer{
@@ -493,7 +507,7 @@ func TestSAMLLogin(t *testing.T) {
 		SAML: &share.CLUSServerSAML{
 			CLUSServerAuth: share.CLUSServerAuth{
 				GroupMappedRoles: []*share.GroupRoleMapping{
-					&share.GroupRoleMapping{
+					{
 						Group:       "group1",
 						GlobalRole:  api.UserRoleReader,
 						RoleDomains: make(map[string][]string),
@@ -505,10 +519,12 @@ func TestSAMLLogin(t *testing.T) {
 			X509Cert: "cert",
 		},
 	}
-	clusHelper.PutServerRev(&saml, 0)
+	if err := clusHelper.PutServerRev(&saml, 0); err != nil {
+		t.Errorf("PutServerRev error: %s", err)
+	}
 
 	mockAuther := mockRemoteAuth{samlUsers: make(map[string]*samlUser)}
-	mockAuther.addSAMLUser("token", map[string][]string{"Email": []string{"joe@example.com"}})
+	mockAuther.addSAMLUser("token", map[string][]string{"Email": {"joe@example.com"}})
 	remoteAuther = &mockAuther
 
 	w := loginServerToken("token", "saml1")
@@ -558,7 +574,7 @@ func TestSAMLLoginShadowUser(t *testing.T) {
 		SAML: &share.CLUSServerSAML{
 			CLUSServerAuth: share.CLUSServerAuth{
 				GroupMappedRoles: []*share.GroupRoleMapping{
-					&share.GroupRoleMapping{
+					{
 						Group:       "group1",
 						GlobalRole:  api.UserRoleReader,
 						RoleDomains: make(map[string][]string),
@@ -570,11 +586,13 @@ func TestSAMLLoginShadowUser(t *testing.T) {
 			X509Cert: "cert",
 		},
 	}
-	clusHelper.PutServerRev(&saml, 0)
+	if err := clusHelper.PutServerRev(&saml, 0); err != nil {
+		t.Errorf("PutServerRev error: %v", err)
+	}
 
 	username := "joe"
 	mockAuther := mockRemoteAuth{samlUsers: make(map[string]*samlUser)}
-	mockAuther.addSAMLUser("joe-token", map[string][]string{"Username": []string{username}})
+	mockAuther.addSAMLUser("joe-token", map[string][]string{"Username": {username}})
 	remoteAuther = &mockAuther
 
 	w := loginServerToken("joe-token", "saml1")
@@ -612,7 +630,9 @@ func TestSAMLLoginShadowUser(t *testing.T) {
 
 	// Modify user's timeout and role by admin
 	admin := makeLocalUser("admin", "admin", api.UserRoleAdmin)
-	clusHelper.CreateUser(admin)
+	if err := clusHelper.CreateUser(admin); err != nil {
+		t.Errorf("CreateUser error: %v", err)
+	}
 	w = login("admin", "admin")
 	tokenAdmin := getLoginToken(w)
 
@@ -707,22 +727,22 @@ func TestSAMLAttrs(t *testing.T) {
 	cs3 := &share.CLUSServer{Name: "saml1", Enable: true,
 		SAML: &share.CLUSServerSAML{CLUSServerAuth: share.CLUSServerAuth{
 			GroupMappedRoles: []*share.GroupRoleMapping{
-				&share.GroupRoleMapping{
+				{
 					Group:       "admin_group1",
 					GlobalRole:  api.UserRoleAdmin,
 					RoleDomains: make(map[string][]string),
 				},
-				&share.GroupRoleMapping{
+				{
 					Group:       "admin_group2",
 					GlobalRole:  api.UserRoleAdmin,
 					RoleDomains: make(map[string][]string),
 				},
-				&share.GroupRoleMapping{
+				{
 					Group:       "reader_group1",
 					GlobalRole:  api.UserRoleReader,
 					RoleDomains: make(map[string][]string),
 				},
-				&share.GroupRoleMapping{
+				{
 					Group:       "reader_group2",
 					GlobalRole:  api.UserRoleReader,
 					RoleDomains: make(map[string][]string),
@@ -734,22 +754,22 @@ func TestSAMLAttrs(t *testing.T) {
 		SAML: &share.CLUSServerSAML{CLUSServerAuth: share.CLUSServerAuth{
 			DefaultRole: api.UserRoleReader,
 			GroupMappedRoles: []*share.GroupRoleMapping{
-				&share.GroupRoleMapping{
+				{
 					Group:       "admin_group1",
 					GlobalRole:  api.UserRoleAdmin,
 					RoleDomains: make(map[string][]string),
 				},
-				&share.GroupRoleMapping{
+				{
 					Group:       "admin_group2",
 					GlobalRole:  api.UserRoleAdmin,
 					RoleDomains: make(map[string][]string),
 				},
-				&share.GroupRoleMapping{
+				{
 					Group:       "reader_group1",
 					GlobalRole:  api.UserRoleReader,
 					RoleDomains: make(map[string][]string),
 				},
-				&share.GroupRoleMapping{
+				{
 					Group:       "reader_group2",
 					GlobalRole:  api.UserRoleReader,
 					RoleDomains: make(map[string][]string),
@@ -758,16 +778,16 @@ func TestSAMLAttrs(t *testing.T) {
 		}},
 	}
 	attr1 := map[string][]string{
-		"Username": []string{"joe"},
+		"Username": {"joe"},
 	}
 	attr2 := map[string][]string{
-		"NVRoleGroup": []string{"test_group"},
+		"NVRoleGroup": {"test_group"},
 	}
 	attr3 := map[string][]string{
-		"NVRoleGroup": []string{"test_group", "reader_group2"}, "Username": []string{"paul"},
+		"NVRoleGroup": {"test_group", "reader_group2"}, "Username": {"paul"},
 	}
 	attr4 := map[string][]string{
-		"NVRoleGroup": []string{"test_group", "admin_group1"}, "Email": []string{"jane@example.com"},
+		"NVRoleGroup": {"test_group", "admin_group1"}, "Email": {"jane@example.com"},
 	}
 
 	if user, username, err := samlAuthz(cs4, nil); err == nil {
@@ -819,7 +839,7 @@ func TestOIDCLogin(t *testing.T) {
 		LDAP: &share.CLUSServerLDAP{
 			CLUSServerAuth: share.CLUSServerAuth{
 				GroupMappedRoles: []*share.GroupRoleMapping{
-					&share.GroupRoleMapping{
+					{
 						Group:       "group1",
 						GlobalRole:  api.UserRoleReader,
 						RoleDomains: make(map[string][]string),
@@ -828,7 +848,9 @@ func TestOIDCLogin(t *testing.T) {
 			},
 		},
 	}
-	clusHelper.PutServerRev(&ldap, 0)
+	if err := clusHelper.PutServerRev(&ldap, 0); err != nil {
+		t.Errorf("PutServerRev error: %v", err)
+	}
 
 	// Not enabled
 	oidc := share.CLUSServer{
@@ -836,7 +858,7 @@ func TestOIDCLogin(t *testing.T) {
 		OIDC: &share.CLUSServerOIDC{
 			CLUSServerAuth: share.CLUSServerAuth{
 				GroupMappedRoles: []*share.GroupRoleMapping{
-					&share.GroupRoleMapping{
+					{
 						Group:       "group1",
 						GlobalRole:  api.UserRoleReader,
 						RoleDomains: make(map[string][]string),
@@ -846,7 +868,9 @@ func TestOIDCLogin(t *testing.T) {
 			Issuer: "issuer",
 		},
 	}
-	clusHelper.PutServerRev(&oidc, 0)
+	if err := clusHelper.PutServerRev(&oidc, 0); err != nil {
+		t.Errorf("PutServerRev error: %s", err)
+	}
 
 	mockAuther := mockRemoteAuth{oidcUsers: make(map[string]*oidcUser)}
 	mockAuther.addOIDCUser("token", map[string]interface{}{oidcPreferredNameKey: "joe@example.com"})

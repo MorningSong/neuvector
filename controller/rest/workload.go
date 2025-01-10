@@ -19,7 +19,7 @@ import (
 	"github.com/neuvector/neuvector/share/utils"
 )
 
-const logsSizeLimit = 500 * 1000
+// const logsSizeLimit = 500 * 1000
 
 func stats2REST(stats *share.CLUSStats) *api.RESTStats {
 	r := &api.RESTStats{
@@ -514,7 +514,7 @@ func handlerWorkloadConfig(w http.ResponseWriter, r *http.Request, ps httprouter
 			restRespNotFoundLogAccessDenied(w, login, err)
 			return
 		}
-		if wl.CapQuar == false {
+		if !wl.CapQuar {
 			err := "Unable to quarantine the container"
 			log.WithFields(log.Fields{"id": id}).Error(err)
 			restRespErrorMessage(w, http.StatusBadRequest, api.RESTErrInvalidRequest, err)
@@ -530,7 +530,10 @@ func handlerWorkloadConfig(w http.ResponseWriter, r *http.Request, ps httprouter
 		// Retrieve from the cluster
 		value, rev, _ := cluster.GetRev(key)
 		if value != nil {
-			json.Unmarshal(value, &cconf)
+			if err := json.Unmarshal(value, &cconf); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("Unmarshal")
+				cconf.Wire = share.WireDefault
+			}
 		} else {
 			cconf.Wire = share.WireDefault
 		}
@@ -548,7 +551,11 @@ func handlerWorkloadConfig(w http.ResponseWriter, r *http.Request, ps httprouter
 			}
 		}
 
-		value, _ = json.Marshal(&cconf)
+		value, err = json.Marshal(&cconf)
+		if err != nil {
+			restRespError(w, http.StatusInternalServerError, api.RESTErrFailReadCluster)
+			return
+		}
 		if err = cluster.PutRev(key, value, rev); err != nil {
 			log.WithFields(log.Fields{"error": err, "rev": rev}).Error("")
 			retry++
@@ -741,8 +748,6 @@ func handlerWorkloadRequest(w http.ResponseWriter, r *http.Request, ps httproute
 		restRespErrorMessage(w, http.StatusBadRequest, api.RESTErrInvalidRequest, "Unsupported command")
 		return
 	}
-
-	restRespSuccess(w, r, nil, acc, login, &req, "Container request")
 }
 
 func handlerWorkloadProcessProfile(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {

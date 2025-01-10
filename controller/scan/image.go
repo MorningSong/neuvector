@@ -3,6 +3,7 @@ package scan
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/neuvector/neuvector/share"
 	"github.com/neuvector/neuvector/share/httptrace"
 	scanUtils "github.com/neuvector/neuvector/share/scan"
+	"github.com/neuvector/neuvector/share/scan/registry"
 	registryUtils "github.com/neuvector/neuvector/share/scan/registry"
 	"github.com/neuvector/neuvector/share/utils"
 )
@@ -74,7 +76,7 @@ func imageBankUpdate(img *resource.Image) {
 	newTags := utils.NewSetFromSliceKind(img.Tags)
 
 	ibMutex.Lock()
-	oldTags, _ := imageBank[key]
+	oldTags := imageBank[key]
 	imageBank[key] = newTags
 
 	var moded, deled utils.Set
@@ -190,10 +192,9 @@ type base struct {
 	ignoreProxy bool
 }
 
-func (r *base) url(pathTemplate string, args ...interface{}) string {
+func (r *base) url(pathTemplate string, args ...interface{}) (string, error) {
 	pathSuffix := fmt.Sprintf(pathTemplate, args...)
-	url := fmt.Sprintf("%s%s", r.regURL, pathSuffix)
-	return url
+	return url.JoinPath(r.regURL, pathSuffix)
 }
 
 func (r *base) newRegClient(url, username, password string) error {
@@ -229,8 +230,15 @@ func (r *base) SetTracer(tracer httptrace.HTTPTrace) {
 }
 
 func (r *base) Login(cfg *share.CLUSRegistryConfig) (error, string) {
-	r.newRegClient(cfg.Registry, cfg.Username, cfg.Password)
-	r.rc.Alive()
+	if err := r.newRegClient(cfg.Registry, cfg.Username, cfg.Password); err != nil {
+		return err, err.Error()
+	}
+
+	if code, err := r.rc.Alive(); err != nil {
+		if code != registry.ErrorAuthentication {
+			return err, err.Error()
+		}
+	}
 	return nil, ""
 }
 
@@ -242,9 +250,9 @@ func (r *base) GetRepoList(org, name string, limit int) ([]*share.CLUSImage, err
 
 	if !strings.Contains(name, "*") {
 		if org == "" {
-			return []*share.CLUSImage{&share.CLUSImage{Repo: name}}, nil
+			return []*share.CLUSImage{{Repo: name}}, nil
 		} else {
-			return []*share.CLUSImage{&share.CLUSImage{Repo: fmt.Sprintf("%s/%s", org, name)}}, nil
+			return []*share.CLUSImage{{Repo: fmt.Sprintf("%s/%s", org, name)}}, nil
 		}
 	}
 

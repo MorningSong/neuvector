@@ -26,7 +26,7 @@ import (
 
 	"errors"
 
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v5"
 	"sigs.k8s.io/yaml"
 
 	"github.com/hashicorp/go-version"
@@ -68,7 +68,7 @@ const gzipThreshold = 1200 // On most Ethernet NICs MTU is 1500 bytes. Let's giv
 
 var evqueue cluster.ObjectQueueInterface
 var auditQueue cluster.ObjectQueueInterface
-var messenger cluster.MessengerInterface
+
 var clusHelper kv.ClusterHelper
 var cfgHelper kv.ConfigHelper
 var cacher cache.CacheInterface
@@ -79,7 +79,6 @@ var k8sPlatform bool
 
 var fedRestServerMutex sync.Mutex
 var fedRestServerState uint64
-var crdEventProcTicker *time.Ticker
 
 var dockerRegistries utils.Set
 var defaultRegistries utils.Set
@@ -96,7 +95,7 @@ var _restPort uint
 var _fedPort uint
 var _fedServerChan chan bool
 
-var _licSigKeyEnv int
+// var _licSigKeyEnv int
 
 var _teleNeuvectorURL string
 var _teleFreq uint
@@ -108,8 +107,6 @@ const defFedSSLCertFile = "/etc/neuvector/certs/fed-ssl-cert.pem"
 const defFedSSLKeyFile = "/etc/neuvector/certs/fed-ssl-cert.key"
 
 const restErrMessageDefault string = "Unknown error"
-
-const crdEventProcPeriod = time.Duration(time.Second * 10)
 
 var restErrNeedAgentWorkloadFilter = errors.New("Enforcer or workload filter must be provided")
 var restErrNeedAgentFilter = errors.New("Enforcer filter must be provided")
@@ -187,13 +184,15 @@ func restRespForward(w http.ResponseWriter, r *http.Request, statusCode int, hea
 		hNames = append(hNames, "X-Transaction-ID")
 	}
 	for _, hName := range hNames {
-		if v, _ := headers[hName]; v != "" {
+		if v := headers[hName]; v != "" {
 			w.Header().Set(hName, v)
 		}
 	}
 	w.WriteHeader(statusCode)
 	if data != nil {
-		w.Write(data)
+		if _, err := w.Write(data); err != nil {
+			log.WithFields(log.Fields{"error": err}).Debug("Write")
+		}
 	}
 }
 
@@ -221,7 +220,9 @@ func restRespPartial(w http.ResponseWriter, r *http.Request, resp interface{}) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusPartialContent)
 	if data != nil {
-		w.Write(data)
+		if _, err := w.Write(data); err != nil {
+			log.WithFields(log.Fields{"error": err}).Debug("Write")
+		}
 	}
 }
 
@@ -239,7 +240,9 @@ func restRespSuccess(w http.ResponseWriter, r *http.Request, resp interface{},
 			if accept == "application/gob" {
 				var buf bytes.Buffer
 				enc := gob.NewEncoder(&buf)
-				enc.Encode(resp)
+				if err := enc.Encode(resp); err != nil {
+					log.WithFields(log.Fields{"error": err}).Debug("Encode")
+				}
 				data = buf.Bytes()
 				ct = accept
 			} else {
@@ -268,7 +271,9 @@ func restRespSuccess(w http.ResponseWriter, r *http.Request, resp interface{},
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	if data != nil {
-		w.Write(data)
+		if _, err := w.Write(data); err != nil {
+			log.WithFields(log.Fields{"error": err}).Debug("Write")
+		}
 	}
 
 	if msg != "" {
@@ -303,8 +308,14 @@ func restRespErrorMessage(w http.ResponseWriter, status int, code int, msg strin
 		msg = e
 	}
 	resp := api.RESTError{Code: code, Error: e, Message: msg}
-	value, _ := json.Marshal(resp)
-	w.Write(value)
+	value, err := json.Marshal(resp)
+	if err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("Marshal")
+		return
+	}
+	if _, err := w.Write(value); err != nil {
+		log.WithFields(log.Fields{"error": err}).Debug("Write")
+	}
 }
 
 func restRespErrorMessageEx(w http.ResponseWriter, status int, code int, msg string, i interface{}) {
@@ -334,8 +345,14 @@ func restRespErrorMessageEx(w http.ResponseWriter, status int, code int, msg str
 		// v has type api.RESTImportTaskData
 		resp.ImportTaskData = &v
 	}
-	value, _ := json.Marshal(resp)
-	w.Write(value)
+	value, err := json.Marshal(resp)
+	if err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("Marshal")
+		return
+	}
+	if _, err := w.Write(value); err != nil {
+		log.WithFields(log.Fields{"error": err}).Debug("Write")
+	}
 }
 
 func restRespError(w http.ResponseWriter, status int, code int) {
@@ -363,8 +380,14 @@ func restRespErrorReadOnlyRules(w http.ResponseWriter, status int, code int, msg
 		},
 		ReadOnlyRuleIDs: readOnlyRuleIDs,
 	}
-	value, _ := json.Marshal(resp)
-	w.Write(value)
+	value, err := json.Marshal(resp)
+	if err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("Marshal")
+		return
+	}
+	if _, err := w.Write(value); err != nil {
+		log.WithFields(log.Fields{"error": err}).Debug("Write")
+	}
 }
 
 func restRespAccessDenied(w http.ResponseWriter, login *loginSession) {
@@ -705,7 +728,7 @@ func restNewFilter(data interface{}, filters []restFieldFilter) *restFilter {
 		}
 	}
 
-	for i, _ := range filters {
+	for i := range filters {
 		rf.FilteredBy(data, &filters[i])
 	}
 
@@ -716,7 +739,7 @@ func (rf *restFilter) FilteredBy(data interface{}, ff *restFieldFilter) *restFil
 	v := reflect.ValueOf(data).Elem()
 
 	// Get field name from tag
-	if ff.field, _ = rf.tags[ff.tag]; ff.field == "" {
+	if ff.field = rf.tags[ff.tag]; ff.field == "" {
 		log.WithFields(log.Fields{"tag": ff.tag}).Debug("Field with tag not exist")
 		return rf
 	}
@@ -868,7 +891,7 @@ func restNewSorter(data []interface{}, sorts []restFieldSort) *restSorter {
 		}
 	}
 
-	for i, _ := range sorts {
+	for i := range sorts {
 		rs.SortedBy(&sorts[i])
 	}
 	return &rs
@@ -879,7 +902,7 @@ func (rs *restSorter) SortedBy(s *restFieldSort) *restSorter {
 	v := reflect.ValueOf(d).Elem()
 
 	// Get field name from tag
-	if s.field, _ = rs.tags[s.tag]; s.field == "" {
+	if s.field = rs.tags[s.tag]; s.field == "" {
 		log.WithFields(log.Fields{"tag": s.tag}).Error("Field with tag not exist")
 		return rs
 	}
@@ -1002,16 +1025,16 @@ func restEventLog(r *http.Request, body []byte, login *loginSession, fields rest
 		clog.RESTBody = string(body[:size])
 	}
 
-	if fields != nil {
-		for key, value := range fields {
-			switch key {
-			case restLogFieldMsg:
-				clog.Msg = value
-			}
+	for key, value := range fields {
+		switch key {
+		case restLogFieldMsg:
+			clog.Msg = value
 		}
 	}
 
-	evqueue.Append(&clog)
+	if err := evqueue.Append(&clog); err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("evqueue.Append")
+	}
 }
 
 // --
@@ -1028,10 +1051,10 @@ func getNewestVersion(vers utils.Set) string {
 	return newest
 }
 
-func isIDStringValid(name string) bool {
-	valid, _ := regexp.MatchString("^[.a-zA-Z0-9_-]*$", name)
-	return valid
-}
+// func isIDStringValid(name string) bool {
+// 	valid, _ := regexp.MatchString("^[.a-zA-Z0-9_-]*$", name)
+// 	return valid
+// }
 
 func isObjectNameValid(name string) bool {
 	// Object name must starts with letters or digits
@@ -1348,7 +1371,7 @@ func initCertificates() error {
 		RenewThreshold:    renewThreshold,
 		ExpiryCheckPeriod: expiryCheckPeriod,
 	})
-	CertManager.Register(share.CLUSJWTKey, &kv.CertManagerCallback{
+	err := CertManager.Register(share.CLUSJWTKey, &kv.CertManagerCallback{
 		NewCert: func(*share.CLUSX509Cert) (*share.CLUSX509Cert, error) {
 			cert, key, err := kv.GenTlsKeyCert(share.CLUSJWTKey, "", "", kv.ValidityPeriod{Day: jwtCertValidityPeriodDay}, x509.ExtKeyUsageAny)
 			if err != nil {
@@ -1411,6 +1434,9 @@ func initCertificates() error {
 			}).Info("new certificate is loaded")
 		},
 	})
+	if err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("CertManager.Register")
+	}
 
 	tlsCertNotfound := false
 	if _, err := os.Stat(defaultSSLCertFile); errors.Is(err, os.ErrNotExist) {
@@ -1422,7 +1448,7 @@ func initCertificates() error {
 	}
 
 	if tlsCertNotfound {
-		CertManager.Register(share.CLUSTLSCert, &kv.CertManagerCallback{
+		err := CertManager.Register(share.CLUSTLSCert, &kv.CertManagerCallback{
 			NewCert: func(*share.CLUSX509Cert) (*share.CLUSX509Cert, error) {
 				cert, key, err := kv.GenTlsKeyCert(share.CLUSTLSCert, "", "", kv.ValidityPeriod{Day: tlsCertValidityPeriodDay}, x509.ExtKeyUsageServerAuth)
 				if err != nil {
@@ -1471,10 +1497,19 @@ func initCertificates() error {
 				}).Info("new certificate is loaded")
 			},
 		})
+		if err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("CertManager.Register")
+		}
 	}
 	// Create and setup certificate.
-	CertManager.CheckAndRenewCerts()
-	go CertManager.Run(context.TODO())
+	if err := CertManager.CheckAndRenewCerts(); err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("CheckAndRenewCerts")
+	}
+	go func() {
+		if err := CertManager.Run(context.TODO()); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("CertManager.Run")
+		}
+	}()
 	return nil
 }
 
@@ -1486,11 +1521,40 @@ func PreInitContext(ctx *Context) {
 	scanner = ctx.Scanner
 	evqueue = ctx.EvQueue
 	auditQueue = ctx.AuditQueue
-	messenger = ctx.Messenger
 
 	remoteAuther = auth.NewRemoteAuther(nil)
 	clusHelper = kv.GetClusterHelper()
 	cfgHelper = kv.GetConfigHelper()
+}
+
+func initSearchRegistries(ctx *Context) {
+	searchRegistries = utils.NewSet()
+
+	for _, reg := range strings.Split(ctx.SearchRegistries, ",") {
+		reg = strings.Trim(reg, " ")
+		if len(reg) > 0 {
+			parsedReg, err := url.Parse(reg)
+			if err != nil {
+				log.WithError(err).WithFields(log.Fields{"registry": reg}).Warn("unable to parse registry")
+				continue
+			}
+			var regURL string
+			if parsedReg.Scheme == "" {
+				// when scheme is not specified in reg, host is in parsedReg.Path
+				path := parsedReg.Path
+				if i := strings.Index(parsedReg.Path, "/"); i > 0 {
+					path = parsedReg.Path[:i]
+				}
+				regURL = fmt.Sprintf("https://%s/", path)
+			} else {
+				// when scheme is specified in reg, host is in parsedReg.Host
+				regURL = fmt.Sprintf("%s://%s/", parsedReg.Scheme, parsedReg.Host)
+			}
+			if !searchRegistries.Contains(regURL) {
+				searchRegistries.Add(regURL)
+			}
+		}
+	}
 }
 
 // InitContext() must be called before StartRESTServer(), StartFedRestServer or AdmissionRestServer()
@@ -1499,7 +1563,6 @@ func InitContext(ctx *Context) {
 	_restPort = ctx.RESTPort
 	_fedPort = ctx.FedPort
 	_fedServerChan = make(chan bool, 1)
-	crdEventProcTicker = time.NewTicker(crdEventProcPeriod)
 	checkCrdSchemaFunc = ctx.CheckCrdSchemaFunc
 
 	if ctx.PwdValidUnit < _pwdValidPerDayUnit && ctx.PwdValidUnit > 0 {
@@ -1516,28 +1579,13 @@ func InitContext(ctx *Context) {
 		log.WithError(err).Error("failed to initialize keys/certificates.")
 	}
 
-	searchRegistries = utils.NewSet()
-
-	for _, reg := range strings.Split(ctx.SearchRegistries, ",") {
-		if parsedReg, err := url.Parse(reg); err != nil {
-			log.WithError(err).WithFields(log.Fields{"registry": reg}).Warn("unable to parse registry")
-			continue
-		} else if parsedReg.Host != "" {
-			reg = parsedReg.Host
-		}
-
-		k := fmt.Sprintf("https://%s/", strings.Trim(reg, " "))
-		if !searchRegistries.Contains(k) {
-			searchRegistries.Add(k)
-		}
-	}
+	initSearchRegistries(ctx)
 
 	initHttpClients()
 }
 
 func StartRESTServer(isNewCluster bool, isLead bool) {
 	initDefaultRegistries()
-	licenseInit()
 	newRepoScanMgr()
 	newRegTestMgr()
 
@@ -1606,15 +1654,14 @@ func StartRESTServer(isNewCluster bool, isLead bool) {
 	r.GET("/v1/system/config", handlerSystemGetConfig)   // supported 'scope' query parameter values: ""(all, default)/"fed"/"local". no payload
 	r.GET("/v2/system/config", handlerSystemGetConfigV2) // supported 'scope' query parameter values: ""(all, default)/"fed"/"local". no payload. starting from 5.0, rest client should call this api.
 	r.GET("/v1/system/alerts", handlerSystemGetAlerts)
+	r.GET("/v1/system/score/metrics", handlerGetSystemScoreMetrics)
+	r.POST("/v1/system/score/metrics", handlerPredictSystemScore) // skip API document
 	r.PATCH("/v1/system/config", handlerSystemConfig)
 	r.PATCH("/v2/system/config", handlerSystemConfigV2)
 	r.POST("/v1/system/config/webhook", handlerSystemWebhookCreate)
 	r.PATCH("/v1/system/config/webhook/:name", handlerSystemWebhookConfig)  // supported 'scope' query parameter values: "fed"/"local"(default).
 	r.DELETE("/v1/system/config/webhook/:name", handlerSystemWebhookDelete) // supported 'scope' query parameter values: "fed"/"local"(default).
 	r.POST("/v1/system/request", handlerSystemRequest)
-	r.GET("/v1/system/license", handlerLicenseShow)
-	r.POST("/v1/system/license/update", handlerLicenseUpdate)
-	r.DELETE("/v1/system/license", handlerLicenseDelete)
 	r.GET("/v1/domain", handlerDomainList)
 	r.PATCH("/v1/domain", handlerDomainConfig)
 	r.PATCH("/v1/domain/:name", handlerDomainEntryConfig)
@@ -2055,11 +2102,15 @@ Loop:
 		case <-_fedServerChan:
 			log.Info("Got master cluster demoted signal, shutting down fed REST server gracefully...")
 			kickFedLoginSessions()
-			server.Shutdown(context.Background())
+			if err := server.Shutdown(context.Background()); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("Shutdown")
+			}
 			break Loop
 		case <-osSignalChan:
 			log.Info("Got OS shutdown signal, shutting down fed REST server gracefully...")
-			server.Shutdown(context.Background())
+			if err := server.Shutdown(context.Background()); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("Shutdown")
+			}
 			break Loop
 		case <-_fedPingTimer.C:
 			if leader := atomic.LoadUint32(&_isLeader); leader == 1 {
@@ -2175,7 +2226,11 @@ func StartStopFedPingPoll(cmd, interval uint32, param1 interface{}) error {
 	case share.RestartWebhookServer:
 		if param1 != nil {
 			if svcName, ok := param1.(*string); ok && svcName != nil {
-				go restartWebhookServer(*svcName)
+				go func() {
+					if err := restartWebhookServer(*svcName); err != nil {
+						log.WithFields(log.Fields{"error": err}).Error("restartWebhookServer")
+					}
+				}()
 			} else {
 				err = fmt.Errorf("wrong type")
 			}
@@ -2230,7 +2285,9 @@ func doExport(filename, exportType string, remoteExportOptions *api.RESTRemoteEx
 		w.Header().Set("Content-Encoding", "gzip")
 		data = utils.GzipBytes(data)
 		w.WriteHeader(http.StatusOK)
-		w.Write(data)
+		if _, err := w.Write(data); err != nil {
+			log.WithFields(log.Fields{"error": err}).Debug("Write")
+		}
 	}
 }
 

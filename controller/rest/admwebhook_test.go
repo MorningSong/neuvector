@@ -1,7 +1,7 @@
 package rest
 
 import (
-	"github.com/neuvector/neuvector/controller/nvk8sapi/nvvalidatewebhookcfg/admission"
+	nvsysadmission "github.com/neuvector/neuvector/controller/nvk8sapi/nvvalidatewebhookcfg/admission"
 	"github.com/neuvector/neuvector/share/utils"
 
 	"testing"
@@ -21,25 +21,25 @@ func TestParseReqImageName(t *testing.T) {
 		defaultRegistries = utils.NewSet("https://index.docker.io/", "https://registry.hub.docker.com/", "https://registry-1.docker.io/") // all on lower-case
 
 		admContainerInfo := &nvsysadmission.AdmContainerInfo{Image: "docker.io/iperf"}
-		parseReqImageName(admContainerInfo)
+		_ = parseReqImageName(admContainerInfo)
 		if admContainerInfo.ImageRegistry.Intersect(defaultRegistries).Cardinality() != 3 || admContainerInfo.ImageRepo != "library/iperf" || admContainerInfo.ImageTag != "latest" {
 			t.Errorf("Unexpected parseReqImageName result(%+v) for: %+v\n", admContainerInfo, admContainerInfo.Image)
 		}
 
 		testImages := []*testImage{
-			&testImage{
+			{
 				image:             "10.1.127.3:5000/neuvector/toolbox/selvam_coreos_http",
 				expectedRegistry:  "https://10.1.127.3:5000/",
 				expectedImageRepo: "neuvector/toolbox/selvam_coreos_http",
 				expectedImageTag:  "latest",
 			},
-			&testImage{
+			{
 				image:             "10.1.127.3:5000/neuvector/toolbox/selvam_coreos_http:RELEASE",
 				expectedRegistry:  "https://10.1.127.3:5000/",
 				expectedImageRepo: "neuvector/toolbox/selvam_coreos_http",
 				expectedImageTag:  "RELEASE",
 			},
-			&testImage{
+			{
 				image:             "10.1.127.3/library/ubuntu:2.51a",
 				expectedRegistry:  "https://10.1.127.3/",
 				expectedImageRepo: "library/ubuntu",
@@ -48,7 +48,7 @@ func TestParseReqImageName(t *testing.T) {
 		}
 		for _, testImage := range testImages {
 			admContainerInfo.Image = testImage.image
-			parseReqImageName(admContainerInfo)
+			_ = parseReqImageName(admContainerInfo)
 			if admContainerInfo.ImageRegistry.Cardinality() != 1 || !admContainerInfo.ImageRegistry.Contains(testImage.expectedRegistry) ||
 				admContainerInfo.ImageRepo != testImage.expectedImageRepo || admContainerInfo.ImageTag != testImage.expectedImageTag {
 				t.Errorf("Unexpected parseReqImageName result(%+v) for: %+v\n", admContainerInfo, admContainerInfo.Image)
@@ -60,13 +60,13 @@ func TestParseReqImageName(t *testing.T) {
 	{
 		admContainerInfo := &nvsysadmission.AdmContainerInfo{}
 		testImages := []*testImage{
-			&testImage{
+			{
 				image:             "docker-registry.default.svc:5000/php-demo-test/php-demo:9331d393add1b2bc0f984e31c4ff75d30938ecadc5cdcca433c3ffaff1c42e43",
 				expectedRegistry:  "https://docker-registry.default.svc:5000/",
 				expectedImageRepo: "php-demo-test/php-demo",
 				expectedImageTag:  "9331d393add1b2bc0f984e31c4ff75d30938ecadc5cdcca433c3ffaff1c42e43",
 			},
-			&testImage{
+			{
 				image:             "docker-registry.default.svc:5000/php-demo-test/php-demo@sha256:9331d393add1b2bc0f984e31c4ff75d30938ecadc5cdcca433c3ffaff1c42e43",
 				expectedRegistry:  "https://docker-registry.default.svc:5000/",
 				expectedImageRepo: "php-demo-test/php-demo",
@@ -75,10 +75,38 @@ func TestParseReqImageName(t *testing.T) {
 		}
 		for _, testImage := range testImages {
 			admContainerInfo.Image = testImage.image
-			parseReqImageName(admContainerInfo)
+			_ = parseReqImageName(admContainerInfo)
 			if admContainerInfo.ImageRegistry.Cardinality() != 1 || !admContainerInfo.ImageRegistry.Contains(testImage.expectedRegistry) ||
 				admContainerInfo.ImageRepo != testImage.expectedImageRepo || admContainerInfo.ImageTag != testImage.expectedImageTag {
 				t.Errorf("Unexpected parseReqImageName result(%+v) for: %+v\n", admContainerInfo, admContainerInfo.Image)
+			}
+		}
+	}
+
+	postTest()
+}
+
+func TestScanEnvVarSecrets(t *testing.T) {
+	preTest()
+
+	vars := map[string]string{
+		"env1": "AIDA11ABLZS4A3QDU576",
+		"env2": "neuvector-svc-controller.neuvector",
+		"env3": "password:abcdefghijklmnop",
+		"env4": "api_token:12345abcdefghijklmnop",
+	}
+	expectedText := map[string]interface{}{
+		"env1=AIDA11ABLZS4A3QDU...":            nil,
+		"env3=password:abcdefghijklm...":       nil,
+		"env4=api_token:12345abcdefghijklm...": nil,
+	}
+	scanSecretLog := scanEnvVarSecrets(vars)
+	if len(scanSecretLog) != 3 {
+		t.Errorf("Expect 3 but only %d environment variables containing secret are found", len(scanSecretLog))
+	} else {
+		for _, log := range scanSecretLog {
+			if _, ok := expectedText[log.Text]; !ok {
+				t.Errorf("Unexpected text for diaplying an environment variable that contains secret: %s", log.Text)
 			}
 		}
 	}

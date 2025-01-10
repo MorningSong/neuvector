@@ -16,7 +16,7 @@ func TestAdmCriteria2CLUS(t *testing.T) {
 	reservedRegs["dockerhub"] = []string{"https://index.docker.io/", "https://registry.hub.docker.com/", "https://registry-1.docker.io/"}
 
 	restCrtArr := []*api.RESTAdmRuleCriterion{
-		&api.RESTAdmRuleCriterion{
+		{
 			Name:  share.CriteriaKeyImageRegistry,
 			Op:    share.CriteriaOpContainsAny,
 			Value: "dockerhub, localhost, dockerhub, https://localhost",
@@ -35,7 +35,7 @@ func TestAdmCriteria2CLUS(t *testing.T) {
 	}
 
 	restCrtArr = []*api.RESTAdmRuleCriterion{
-		&api.RESTAdmRuleCriterion{
+		{
 			Name:  share.CriteriaKeyImageRegistry,
 			Op:    share.CriteriaOpContainsAny,
 			Value: "https://INDEX.docker.io, index.docker.io, https://localhost, 10.1.127.3:5000/neuvector/toolbox/selvam_coreos_http, https://10.1.127.3:5000/neuvector",
@@ -51,6 +51,486 @@ func TestAdmCriteria2CLUS(t *testing.T) {
 		}
 	} else {
 		t.Errorf("Unexpected CLUSAdmRuleCriterion[2]: %+v for %+v\n", clusCrtArr, restCrtArr)
+	}
+}
+
+func TestAdmCriteriaMerge2CLUS(t *testing.T) {
+	reservedRegs["dockerhub"] = []string{"https://index.docker.io/", "https://registry.hub.docker.com/", "https://registry-1.docker.io/"}
+
+	{
+		restCrtArr := []*api.RESTAdmRuleCriterion{
+			{
+				Name:  share.CriteriaKeyCustomPath,
+				Op:    share.CriteriaOpContainsAny,
+				Path:  "spec.template.spec.imagePullSecrets",
+				Value: "regsecret",
+				Kind:  "podTemplate",
+			},
+			{
+				Name:  share.CriteriaKeyImageRegistry,
+				Op:    share.CriteriaOpContainsAny,
+				Value: "https://index.docker.io",
+			},
+			{
+				Name:  share.CriteriaKeyImageRegistry,
+				Op:    share.CriteriaOpContainsAny,
+				Value: "index.docker.io",
+			},
+			{
+				Name:  share.CriteriaKeyImageScanned,
+				Op:    share.CriteriaOpEqual,
+				Value: "false",
+			},
+			{
+				Name:  share.CriteriaKeyNamespace,
+				Op:    share.CriteriaOpNotContainsAny,
+				Value: " ns-1,ns-2,, ,",
+			},
+			{
+				Name:  share.CriteriaKeyImageRegistry,
+				Op:    share.CriteriaOpContainsAny,
+				Value: "10.1.127.3:5000/neuvector/toolbox/selvam_coreos_http",
+			},
+			{
+				Name: share.CriteriaKeyRequestLimit,
+				SubCriteria: []*api.RESTAdmRuleCriterion{
+					{
+						Name:  share.SubCriteriaCpuLimit,
+						Op:    share.CriteriaOpBiggerThan,
+						Value: "2",
+					},
+					{
+						Name:  share.SubCriteriaMemoryRequest,
+						Op:    share.CriteriaOpBiggerThan,
+						Value: "102400000",
+					},
+					{
+						Name:  share.SubCriteriaMemoryLimit,
+						Op:    share.CriteriaOpBiggerThan,
+						Value: "204800000",
+					},
+				},
+			},
+			{
+				Name:  share.CriteriaKeyNamespace,
+				Op:    share.CriteriaOpNotContainsAny,
+				Value: "",
+			},
+			{
+				Name:  share.CriteriaKeyNamespace,
+				Op:    share.CriteriaOpNotContainsAny,
+				Value: "ns-3, ns-4 ",
+			},
+			{
+				Name:  share.CriteriaKeyNamespace,
+				Op:    share.CriteriaOpContainsAny,
+				Value: "production,finance",
+			},
+			{
+				Name:  share.CriteriaKeyRunAsPrivileged,
+				Op:    share.CriteriaOpEqual,
+				Value: "true",
+			},
+			{
+				Name:  share.CriteriaKeyImageRegistry,
+				Op:    share.CriteriaOpContainsAny,
+				Value: "10.1.127.3:5000/neuvector",
+			},
+		}
+
+		clusCrtArr, _ := AdmCriteria2CLUS(restCrtArr) //[]*share.CLUSAdmRuleCriterion
+		expectedCrtArr := []*share.CLUSAdmRuleCriterion{
+			{
+				Name:  share.CriteriaKeyCustomPath,
+				Op:    share.CriteriaOpContainsAny,
+				Path:  "spec.template.spec.imagePullSecrets",
+				Value: "regsecret",
+				Kind:  "podTemplate",
+			},
+			{
+				Name:  share.CriteriaKeyImageRegistry,
+				Op:    share.CriteriaOpContainsAny,
+				Value: "https://index.docker.io/,https://10.1.127.3:5000/",
+			},
+			{
+				Name:  share.CriteriaKeyImageScanned,
+				Op:    share.CriteriaOpEqual,
+				Value: "false",
+			},
+			{
+				Name:  share.CriteriaKeyNamespace,
+				Op:    share.CriteriaOpNotContainsAny,
+				Value: "ns-1,ns-2,ns-3,ns-4",
+			},
+			{
+				Name: share.CriteriaKeyRequestLimit,
+				SubCriteria: []*share.CLUSAdmRuleCriterion{
+					{
+						Name:  share.SubCriteriaCpuLimit,
+						Op:    share.CriteriaOpBiggerThan,
+						Value: "2",
+					},
+					{
+						Name:  share.SubCriteriaMemoryRequest,
+						Op:    share.CriteriaOpBiggerThan,
+						Value: "102400000",
+					},
+					{
+						Name:  share.SubCriteriaMemoryLimit,
+						Op:    share.CriteriaOpBiggerThan,
+						Value: "204800000",
+					},
+				},
+			},
+			{
+				Name:  share.CriteriaKeyNamespace,
+				Op:    share.CriteriaOpContainsAny,
+				Value: "production,finance",
+			},
+			{
+				Name:  share.CriteriaKeyRunAsPrivileged,
+				Op:    share.CriteriaOpEqual,
+				Value: "true",
+			},
+		}
+
+		if len(clusCrtArr) == len(expectedCrtArr) {
+			for i, clusCrt := range clusCrtArr {
+				expectedCrt := expectedCrtArr[i]
+				if clusCrt.Name != expectedCrt.Name || clusCrt.Op != expectedCrt.Op || clusCrt.Path != expectedCrt.Path ||
+					clusCrt.Value != expectedCrt.Value || clusCrt.Kind != expectedCrt.Kind {
+					t.Errorf("[1] Unexpected criteria[%d]: %+v for %+v\n", i, *clusCrt, *expectedCrt)
+				}
+				if len(clusCrt.SubCriteria) != len(expectedCrt.SubCriteria) {
+					t.Errorf("[1] Unexpected: len(clusCrt.SubCriteria)=%d for len(expectedCrt.SubCriteria)=%d\n",
+						len(clusCrt.SubCriteria), len(expectedCrt.SubCriteria))
+				} else {
+					for j, clusSubCrt := range clusCrt.SubCriteria {
+						expectedSubCrt := expectedCrt.SubCriteria[j]
+						if clusSubCrt.Name != expectedSubCrt.Name || clusSubCrt.Op != expectedSubCrt.Op || clusSubCrt.Path != expectedSubCrt.Path ||
+							clusSubCrt.Value != expectedSubCrt.Value || clusSubCrt.Kind != expectedSubCrt.Kind {
+							t.Errorf("[1] Unexpected subCriteria[%d]: %+v for %+v\n", j, *clusSubCrt, *expectedSubCrt)
+						}
+					}
+				}
+			}
+		} else {
+			t.Errorf("[1] Unexpected: len(clusCrtArr)=%d for len(expectedCrtArr)=%d\n", len(clusCrtArr), len(expectedCrtArr))
+		}
+	}
+
+	{
+		restCrtArr := []*api.RESTAdmRuleCriterion{
+			{
+				Name:  share.CriteriaKeyImageVerifiers,
+				Op:    share.CriteriaOpNotContainsAny,
+				Value: "AKDB/cosign",
+			},
+			{
+				Name:  share.CriteriaKeyImageVerifiers,
+				Op:    share.CriteriaOpContainsAny,
+				Value: "ABC/cosign",
+			},
+			{
+				Name:  share.CriteriaKeyImage,
+				Op:    share.CriteriaOpContainsAny,
+				Value: "https://index.docker.io/iperf",
+			},
+			{
+				Name:  share.CriteriaKeyCustomPath,
+				Op:    share.CriteriaOpContainsAny,
+				Path:  "spec.template.spec.imagePullSecrets",
+				Value: "regsecret",
+				Kind:  "podTemplate",
+			},
+			{
+				Name:  share.CriteriaKeyImage,
+				Op:    share.CriteriaOpContainsAny,
+				Value: "index.docker.io/iperf",
+			},
+			{
+				Name:  share.CriteriaKeyImageScanned,
+				Op:    share.CriteriaOpEqual,
+				Value: "false",
+			},
+			{
+				Name:  share.CriteriaKeyImage,
+				Op:    share.CriteriaOpContainsAny,
+				Value: "10.1.127.3:5000/neuvector/toolbox/selvam_coreos_http",
+			},
+			{
+				Name:  share.CriteriaKeyRunAsPrivileged,
+				Op:    share.CriteriaOpEqual,
+				Value: "true",
+			},
+			{
+				Name:  share.CriteriaKeyImage,
+				Op:    share.CriteriaOpContainsAny,
+				Value: "10.1.127.3:5000/neuvector/scanner",
+			},
+			{
+				Name:  share.CriteriaKeyImageVerifiers,
+				Op:    share.CriteriaOpNotContainsAny,
+				Value: "OZG/cosign",
+			},
+		}
+
+		clusCrtArr, _ := AdmCriteria2CLUS(restCrtArr) //[]*share.CLUSAdmRuleCriterion
+		expectedCrtArr := []*share.CLUSAdmRuleCriterion{
+			{
+				Name:  share.CriteriaKeyImageVerifiers,
+				Op:    share.CriteriaOpNotContainsAny,
+				Value: "AKDB/cosign,OZG/cosign",
+			},
+			{
+				Name:  share.CriteriaKeyImageVerifiers,
+				Op:    share.CriteriaOpContainsAny,
+				Value: "ABC/cosign",
+			},
+			{
+				Name:  share.CriteriaKeyImage,
+				Op:    share.CriteriaOpContainsAny,
+				Value: "https://index.docker.io/iperf,https://10.1.127.3:5000/neuvector/toolbox/selvam_coreos_http,https://10.1.127.3:5000/neuvector/scanner",
+			},
+			{
+				Name:  share.CriteriaKeyCustomPath,
+				Op:    share.CriteriaOpContainsAny,
+				Path:  "spec.template.spec.imagePullSecrets",
+				Value: "regsecret",
+				Kind:  "podTemplate",
+			},
+			{
+				Name:  share.CriteriaKeyImageScanned,
+				Op:    share.CriteriaOpEqual,
+				Value: "false",
+			},
+			{
+				Name:  share.CriteriaKeyRunAsPrivileged,
+				Op:    share.CriteriaOpEqual,
+				Value: "true",
+			},
+		}
+
+		if len(clusCrtArr) == len(expectedCrtArr) {
+			for i, clusCrt := range clusCrtArr {
+				expectedCrt := expectedCrtArr[i]
+				if clusCrt.Name != expectedCrt.Name || clusCrt.Op != expectedCrt.Op || clusCrt.Path != expectedCrt.Path ||
+					clusCrt.Value != expectedCrt.Value || clusCrt.Kind != expectedCrt.Kind {
+					t.Errorf("[2] Unexpected criteria[%d]: %+v for %+v\n", i, *clusCrt, *expectedCrt)
+				}
+			}
+		} else {
+			t.Errorf("[2] Unexpected: len(clusCrtArr)=%d for len(expectedCrtArr)=%d\n", len(clusCrtArr), len(expectedCrtArr))
+		}
+	}
+
+	{
+		restCrtArr := []*api.RESTAdmRuleCriterion{
+			{
+				Name:  share.CriteriaKeyImageVerifiers,
+				Op:    share.CriteriaOpContainsAll,
+				Value: "AKDB/cosign",
+			},
+			{
+				Name:  share.CriteriaKeyCustomPath,
+				Op:    share.CriteriaOpContainsAny,
+				Path:  "spec.template.spec.imagePullSecrets",
+				Value: "regsecret",
+				Kind:  "podTemplate",
+			},
+			{
+				Name:  share.CriteriaKeyImage,
+				Op:    share.CriteriaOpRegex,
+				Value: "*iperf",
+			},
+			{
+				Name:  share.CriteriaKeyImageScanned,
+				Op:    share.CriteriaOpEqual,
+				Value: "false",
+			},
+		}
+
+		clusCrtArr, _ := AdmCriteria2CLUS(restCrtArr) //[]*share.CLUSAdmRuleCriterion
+		expectedCrtArr := restCrtArr
+
+		if len(clusCrtArr) == len(expectedCrtArr) {
+			for i, clusCrt := range clusCrtArr {
+				expectedCrt := expectedCrtArr[i]
+				if clusCrt.Name != expectedCrt.Name || clusCrt.Op != expectedCrt.Op || clusCrt.Path != expectedCrt.Path ||
+					clusCrt.Value != expectedCrt.Value || clusCrt.Kind != expectedCrt.Kind {
+					t.Errorf("[3] Unexpected criteria[%d]: %+v for %+v\n", i, *clusCrt, *expectedCrt)
+				}
+			}
+		} else {
+			t.Errorf("[3] Unexpected: len(clusCrtArr)=%d for len(expectedCrtArr)=%d\n", len(clusCrtArr), len(expectedCrtArr))
+		}
+	}
+
+	{
+		restCrtArr := []*api.RESTAdmRuleCriterion{
+			{
+				Name:  share.CriteriaKeyCustomPath,
+				Op:    share.CriteriaOpContainsAny,
+				Path:  "spec.template.spec.imagePullSecrets",
+				Value: "regsecret",
+				Kind:  "podTemplate",
+			},
+			{
+				Name:  share.CriteriaKeyMountVolumes,
+				Op:    share.CriteriaOpContainsOtherThan,
+				Value: "abc",
+			},
+			{
+				Name:  share.CriteriaKeyImageScanned,
+				Op:    share.CriteriaOpEqual,
+				Value: "false",
+			},
+			{
+				Name:  share.CriteriaKeyK8sGroups,
+				Op:    share.CriteriaOpContainsOtherThan,
+				Value: "g1,g2",
+			},
+			{
+				Name: share.CriteriaKeyRequestLimit,
+				SubCriteria: []*api.RESTAdmRuleCriterion{
+					{
+						Name:  share.SubCriteriaCpuLimit,
+						Op:    share.CriteriaOpBiggerThan,
+						Value: "2",
+					},
+					{
+						Name:  share.SubCriteriaMemoryRequest,
+						Op:    share.CriteriaOpBiggerThan,
+						Value: "102400000",
+					},
+					{
+						Name:  share.SubCriteriaMemoryLimit,
+						Op:    share.CriteriaOpBiggerThan,
+						Value: "204800000",
+					},
+				},
+			},
+			{
+				Name:  share.CriteriaKeyUser,
+				Op:    share.CriteriaOpRegex,
+				Value: "temp",
+			},
+			{
+				Name:  share.CriteriaKeyRunAsRoot,
+				Op:    share.CriteriaOpEqual,
+				Value: "true",
+			},
+			{
+				Name:  share.CriteriaKeySaBindRiskyRole,
+				Op:    share.CriteriaOpContainsTagAny,
+				Value: "admin",
+			},
+			{
+				Name:  share.CriteriaKeyHasPssViolation,
+				Op:    share.CriteriaOpEqual,
+				Value: share.PssPolicyRestricted,
+			},
+			{
+				Name:  share.CriteriaKeySaBindRiskyRole,
+				Op:    share.CriteriaOpContainsTagAny,
+				Value: "administrator",
+			},
+		}
+
+		clusCrtArr, _ := AdmCriteria2CLUS(restCrtArr) //[]*share.CLUSAdmRuleCriterion
+		expectedCrtArr := []*share.CLUSAdmRuleCriterion{
+			{
+				Name:  share.CriteriaKeyCustomPath,
+				Op:    share.CriteriaOpContainsAny,
+				Path:  "spec.template.spec.imagePullSecrets",
+				Value: "regsecret",
+				Kind:  "podTemplate",
+			},
+			{
+				Name:  share.CriteriaKeyMountVolumes,
+				Op:    share.CriteriaOpContainsOtherThan,
+				Value: "abc",
+			},
+			{
+				Name:  share.CriteriaKeyImageScanned,
+				Op:    share.CriteriaOpEqual,
+				Value: "false",
+			},
+			{
+				Name:  share.CriteriaKeyK8sGroups,
+				Op:    share.CriteriaOpContainsOtherThan,
+				Value: "g1,g2",
+			},
+			{
+				Name: share.CriteriaKeyRequestLimit,
+				SubCriteria: []*share.CLUSAdmRuleCriterion{
+					{
+						Name:  share.SubCriteriaCpuLimit,
+						Op:    share.CriteriaOpBiggerThan,
+						Value: "2",
+					},
+					{
+						Name:  share.SubCriteriaMemoryRequest,
+						Op:    share.CriteriaOpBiggerThan,
+						Value: "102400000",
+					},
+					{
+						Name:  share.SubCriteriaMemoryLimit,
+						Op:    share.CriteriaOpBiggerThan,
+						Value: "204800000",
+					},
+				},
+			},
+			{
+				Name:  share.CriteriaKeyUser,
+				Op:    share.CriteriaOpRegex,
+				Value: "temp",
+			},
+			{
+				Name:  share.CriteriaKeyRunAsRoot,
+				Op:    share.CriteriaOpEqual,
+				Value: "true",
+			},
+			{
+				Name:  share.CriteriaKeySaBindRiskyRole,
+				Op:    share.CriteriaOpContainsTagAny,
+				Value: "admin",
+			},
+			{
+				Name:  share.CriteriaKeyHasPssViolation,
+				Op:    share.CriteriaOpEqual,
+				Value: share.PssPolicyRestricted,
+			},
+			{
+				Name:  share.CriteriaKeySaBindRiskyRole,
+				Op:    share.CriteriaOpContainsTagAny,
+				Value: "administrator",
+			},
+		}
+
+		if len(clusCrtArr) == len(expectedCrtArr) {
+			for i, clusCrt := range clusCrtArr {
+				expectedCrt := expectedCrtArr[i]
+				if clusCrt.Name != expectedCrt.Name || clusCrt.Op != expectedCrt.Op || clusCrt.Path != expectedCrt.Path ||
+					clusCrt.Value != expectedCrt.Value || clusCrt.Kind != expectedCrt.Kind {
+					t.Errorf("[1] Unexpected criteria[%d]: %+v for %+v\n", i, *clusCrt, *expectedCrt)
+				}
+				if len(clusCrt.SubCriteria) != len(expectedCrt.SubCriteria) {
+					t.Errorf("[1] Unexpected: len(clusCrt.SubCriteria)=%d for len(expectedCrt.SubCriteria)=%d\n",
+						len(clusCrt.SubCriteria), len(expectedCrt.SubCriteria))
+				} else {
+					for j, clusSubCrt := range clusCrt.SubCriteria {
+						expectedSubCrt := expectedCrt.SubCriteria[j]
+						if clusSubCrt.Name != expectedSubCrt.Name || clusSubCrt.Op != expectedSubCrt.Op || clusSubCrt.Path != expectedSubCrt.Path ||
+							clusSubCrt.Value != expectedSubCrt.Value || clusSubCrt.Kind != expectedSubCrt.Kind {
+							t.Errorf("[1] Unexpected subCriteria[%d]: %+v for %+v\n", j, *clusSubCrt, *expectedSubCrt)
+						}
+					}
+				}
+			}
+		} else {
+			t.Errorf("[1] Unexpected: len(clusCrtArr)=%d for len(expectedCrtArr)=%d\n", len(clusCrtArr), len(expectedCrtArr))
+		}
 	}
 }
 
@@ -112,7 +592,7 @@ func TestIsStringCriterionMet(t *testing.T) {
 	}
 
 	crts := []*share.CLUSAdmRuleCriterion{
-		&share.CLUSAdmRuleCriterion{
+		{
 			Name:  share.CriteriaKeyImageRegistry,
 			Op:    share.CriteriaOpContainsAny,
 			Value: "https://index.docker.io/,https://10.1.127.3:5000/",
@@ -120,7 +600,7 @@ func TestIsStringCriterionMet(t *testing.T) {
 	}
 	values := []string{"https://index.docker.io/"}
 	expected := []matchResult{
-		matchResult{met: true, positive: true},
+		{met: true, positive: true},
 	}
 	for idx, crt := range crts {
 		crt.ValueSlice = strings.Split(crt.Value, ",")
@@ -153,19 +633,19 @@ func TestMatchImageValue(t *testing.T) {
 
 	crtValue := "https://10.1.127.3:5000/neuvector/toolbox/selvam_coreos_http"
 	testContainers := []*testContainer{
-		&testContainer{
+		{
 			imageRegistry: "https://10.1.127.3:5000/",
 			ImageRepo:     "neuvector/toolbox/selvam_coreos_http",
 			ImageTag:      "latest",
 			expectedMet:   true,
 		},
-		&testContainer{
+		{
 			imageRegistry: "https://10.1.127.3:5000/",
 			ImageRepo:     "neuvector/toolbox/selvam_coreos_http",
 			ImageTag:      "RELEASE",
 			expectedMet:   true,
 		},
-		&testContainer{
+		{
 			imageRegistry: "https://10.1.127.3/",
 			ImageRepo:     "neuvector/selvam_coreos_http",
 			ImageTag:      "latest",
@@ -213,28 +693,28 @@ func TestIsImageCriterionMet(t *testing.T) {
 	}
 
 	testContainers := []*testContainer{
-		&testContainer{
+		{
 			imageRegistry:    "https://10.1.127.3:5000/",
 			ImageRepo:        "neuvector/toolbox/selvam_coreos_http",
 			ImageTag:         "latest",
 			expectedMet:      true,
 			expectedPositive: true,
 		},
-		&testContainer{
+		{
 			imageRegistry:    "https://10.1.127.3:5000/",
 			ImageRepo:        "neuvector/toolbox/selvam_coreos_http",
 			ImageTag:         "RELEASE",
 			expectedMet:      true,
 			expectedPositive: true,
 		},
-		&testContainer{
+		{
 			imageRegistry:    "https://10.1.127.3/",
 			ImageRepo:        "neuvector/selvam_coreos_http",
 			ImageTag:         "latest",
 			expectedMet:      false,
 			expectedPositive: true,
 		},
-		&testContainer{
+		{
 			imageRegistry:    "https://index.docker.io/",
 			ImageRepo:        "library/ubuntu",
 			ImageTag:         "11.0-release",
@@ -264,59 +744,59 @@ func TestIsModulesCriterionMet(t *testing.T) {
 
 	moduleSets := [][]*share.ScanModule{
 		/********************************************/
-		[]*share.ScanModule{
-			&share.ScanModule{
+		{
+			{
 				Name:    "vim",
 				Version: "8.2.4081-1.cm1",
 			},
 		},
 		/********************************************/
-		[]*share.ScanModule{
-			&share.ScanModule{
+		{
+			{
 				Name:    "vim",
 				Version: "8.2.4081-1.cm1",
 			},
-			&share.ScanModule{
+			{
 				Name:    "curl",
 				Version: "9.9.9999-9.cm1",
 			},
 		},
 		/********************************************/
-		[]*share.ScanModule{
-			&share.ScanModule{
+		{
+			{
 				Name:    "vim",
 				Version: "8.2.4081-1.cm1",
 			},
-			&share.ScanModule{
+			{
 				Name:    "curl",
 				Version: "9.9.9999-9.cm1",
 			},
-			&share.ScanModule{
+			{
 				Name:    "random-package",
 				Version: "1.0.0000-0.cm1",
 			},
 		},
 		/********************************************/
-		[]*share.ScanModule{
-			&share.ScanModule{
+		{
+			{
 				Name:    "random-package",
 				Version: "1.0.0000-0.cm1",
 			},
 		},
 		/********************************************/
-		[]*share.ScanModule{
-			&share.ScanModule{
+		{
+			{
 				Name:    "vim",
 				Version: "8.2.4081-1.cm1",
 			},
-			&share.ScanModule{
+			{
 				Name:    "random-package",
 				Version: "1.0.0000-0.cm1",
 			},
 		},
 		/********************************************/
-		[]*share.ScanModule{
-			&share.ScanModule{
+		{
+			{
 				Name:    "vim",
 				Version: "2.0.0",
 			},
@@ -330,116 +810,116 @@ func TestIsModulesCriterionMet(t *testing.T) {
 	}
 
 	cases := []criteriaTestCase{
-		criteriaTestCase{
+		{
 			Value: "vim",
 			Expected: [][]bool{
-				[]bool{true, true, true, false, true, true},  // first array is for CriteriaOpContainsAny
-				[]bool{true, true, true, false, true, true},  // second array is for CriteriaOpContainsAll
-				[]bool{false, true, true, true, true, false}, // third array is for CriteriaOpContainsOtherThan
+				{true, true, true, false, true, true},  // first array is for CriteriaOpContainsAny
+				{true, true, true, false, true, true},  // second array is for CriteriaOpContainsAll
+				{false, true, true, true, true, false}, // third array is for CriteriaOpContainsOtherThan
 			},
 		},
-		criteriaTestCase{
+		{
 			Value: "vim, curl",
 			Expected: [][]bool{
-				[]bool{true, true, true, false, true, true},
-				[]bool{false, true, true, false, false, false},
-				[]bool{false, false, true, true, true, false},
+				{true, true, true, false, true, true},
+				{false, true, true, false, false, false},
+				{false, false, true, true, true, false},
 			},
 		},
-		criteriaTestCase{
+		{
 			Value: "curl",
 			Expected: [][]bool{
-				[]bool{false, true, true, false, false, false},
-				[]bool{false, true, true, false, false, false},
-				[]bool{true, true, true, true, true, true},
+				{false, true, true, false, false, false},
+				{false, true, true, false, false, false},
+				{true, true, true, true, true, true},
 			},
 		},
-		criteriaTestCase{
+		{
 			Value: "vim=8.2.4081-1.cm1",
 			Expected: [][]bool{
-				[]bool{true, true, true, false, true, false},
-				[]bool{true, true, true, false, true, false},
-				[]bool{false, true, true, true, true, true},
+				{true, true, true, false, true, false},
+				{true, true, true, false, true, false},
+				{false, true, true, true, true, true},
 			},
 		},
-		criteriaTestCase{
+		{
 			Value: "vim=8.2.4081-1.cm1, vim=9.9.9999-9.cm1",
 			Expected: [][]bool{
-				[]bool{true, true, true, false, true, false},
-				[]bool{false, false, false, false, false, false},
-				[]bool{false, true, true, true, true, true},
+				{true, true, true, false, true, false},
+				{false, false, false, false, false, false},
+				{false, true, true, true, true, true},
 			},
 		},
-		criteriaTestCase{
+		{
 			Value: "vim=9.9.9999-9.cm1",
 			Expected: [][]bool{
-				[]bool{false, false, false, false, false, false},
-				[]bool{false, false, false, false, false, false},
-				[]bool{true, true, true, true, true, true},
+				{false, false, false, false, false, false},
+				{false, false, false, false, false, false},
+				{true, true, true, true, true, true},
 			},
 		},
-		criteriaTestCase{
+		{
 			Value: "vim=8.2.4081-1.cm1, curl",
 			Expected: [][]bool{
-				[]bool{true, true, true, false, true, false},
-				[]bool{false, true, true, false, false, false},
-				[]bool{false, false, true, true, true, true},
+				{true, true, true, false, true, false},
+				{false, true, true, false, false, false},
+				{false, false, true, true, true, true},
 			},
 		},
-		criteriaTestCase{
+		{
 			Value: "vim=8.2.4081-1.cm1, vim=9.9.9999-9.cm1, curl",
 			Expected: [][]bool{
-				[]bool{true, true, true, false, true, false},
-				[]bool{false, false, false, false, false, false},
-				[]bool{false, false, true, true, true, true},
+				{true, true, true, false, true, false},
+				{false, false, false, false, false, false},
+				{false, false, true, true, true, true},
 			},
 		},
-		criteriaTestCase{
+		{
 			Value: "vim=9.9.9999-9.cm1, curl",
 			Expected: [][]bool{
-				[]bool{false, true, true, false, false, false},
-				[]bool{false, false, false, false, false, false},
-				[]bool{true, true, true, true, true, true},
+				{false, true, true, false, false, false},
+				{false, false, false, false, false, false},
+				{true, true, true, true, true, true},
 			},
 		},
-		criteriaTestCase{
+		{
 			Value: "vim=8.2.4081-1.cm1, curl=9.9.9999-9.cm1",
 			Expected: [][]bool{
-				[]bool{true, true, true, false, true, false},
-				[]bool{false, true, true, false, false, false},
-				[]bool{false, false, true, true, true, true},
+				{true, true, true, false, true, false},
+				{false, true, true, false, false, false},
+				{false, false, true, true, true, true},
 			},
 		},
-		criteriaTestCase{
+		{
 			Value: "vim=8.2.4081-1.cm1, vim=9.9.9999-9.cm1, curl=9.9.9999-9.cm1",
 			Expected: [][]bool{
-				[]bool{true, true, true, false, true, false},
-				[]bool{false, false, false, false, false, false},
-				[]bool{false, false, true, true, true, true},
+				{true, true, true, false, true, false},
+				{false, false, false, false, false, false},
+				{false, false, true, true, true, true},
 			},
 		},
-		criteriaTestCase{
+		{
 			Value: "vim>1.0.0",
 			Expected: [][]bool{
-				[]bool{true, true, true, false, true, true},
-				[]bool{true, true, true, false, true, true},
-				[]bool{false, true, true, true, true, false},
+				{true, true, true, false, true, true},
+				{true, true, true, false, true, true},
+				{false, true, true, true, true, false},
 			},
 		},
-		criteriaTestCase{
+		{
 			Value: "vim<5.0.0",
 			Expected: [][]bool{
-				[]bool{false, false, false, false, false, true},
-				[]bool{false, false, false, false, false, true},
-				[]bool{true, true, true, true, true, false},
+				{false, false, false, false, false, true},
+				{false, false, false, false, false, true},
+				{true, true, true, true, true, false},
 			},
 		},
-		criteriaTestCase{
+		{
 			Value: "vim<=2.0.0",
 			Expected: [][]bool{
-				[]bool{false, false, false, false, false, true},
-				[]bool{false, false, false, false, false, true},
-				[]bool{true, true, true, true, true, false},
+				{false, false, false, false, false, true},
+				{false, false, false, false, false, true},
+				{true, true, true, true, true, false},
 			},
 		},
 	}
@@ -484,47 +964,47 @@ func TestIsMapCriterionMet(t *testing.T) {
 	preTest()
 
 	crts := []*share.CLUSAdmRuleCriterion{
-		&share.CLUSAdmRuleCriterion{
+		{
 			Name:  share.CriteriaKeyLabels,
 			Op:    share.CriteriaOpContainsAny,
 			Value: "label1=value1,label2=value2,label3",
 		},
-		&share.CLUSAdmRuleCriterion{
+		{
 			Name:  share.CriteriaKeyLabels,
 			Op:    share.CriteriaOpContainsAll,
 			Value: "label2=value2,label3,label1",
 		},
-		&share.CLUSAdmRuleCriterion{
+		{
 			Name:  share.CriteriaKeyLabels,
 			Op:    share.CriteriaOpNotContainsAny,
 			Value: "label2=value2,label3,label1=aaa",
 		},
-		&share.CLUSAdmRuleCriterion{
+		{
 			Name:  share.CriteriaKeyLabels,
 			Op:    share.CriteriaOpContainsOtherThan,
 			Value: "label1,label2=value2",
 		},
-		&share.CLUSAdmRuleCriterion{
+		{
 			Name:  share.CriteriaKeyLabels,
 			Op:    share.CriteriaOpContainsOtherThan,
 			Value: "label1",
 		},
-		&share.CLUSAdmRuleCriterion{
+		{
 			Name:  share.CriteriaKeyLabels,
 			Op:    share.CriteriaOpContainsOtherThan,
 			Value: "label1,label2=value2,label3=value3",
 		},
-		&share.CLUSAdmRuleCriterion{
+		{
 			Name:  share.CriteriaKeyLabels,
 			Op:    share.CriteriaOpContainsAny,
 			Value: "label1=value1,label1=value2",
 		},
-		&share.CLUSAdmRuleCriterion{
+		{
 			Name:  share.CriteriaKeyLabels,
 			Op:    share.CriteriaOpContainsOtherThan,
 			Value: "label2=value1,label2=value2",
 		},
-		&share.CLUSAdmRuleCriterion{
+		{
 			Name:  share.CriteriaKeyLabels,
 			Op:    share.CriteriaOpContainsAny,
 			Value: "label1",
@@ -593,42 +1073,42 @@ func TestIsSetCriterionMet(t *testing.T) {
 	}
 
 	criteria := []*share.CLUSAdmRuleCriterion{
-		&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyUser, Op: share.CriteriaOpContainsAny, Value: "jane,ted"},
-		&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyUser, Op: share.CriteriaOpContainsAny, Value: "andrew,ted"},
-		&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyUser, Op: share.CriteriaOpNotContainsAny, Value: "jane,ted"},
-		&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyUser, Op: share.CriteriaOpNotContainsAny, Value: "andrew,ted"},
-		&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsAny, Value: "CVE-2014-887,CVE-2014-888"},
-		&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsAny, Value: "CVE-2014-002,CVE-2016-001"},
-		&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsAny, Value: "CVE-2014-885,CVE-2014-886,CVE-2014-887,CVE-2014-888,CVE-2014-889"},
-		&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpNotContainsAny, Value: "CVE-2014-887,CVE-2014-888"},
-		&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpNotContainsAny, Value: "CVE-2014-002,CVE-2016-001"},
-		&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpNotContainsAny, Value: "CVE-2014-885,CVE-2014-886,CVE-2014-887,CVE-2014-888,CVE-2014-889"},
-		&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsAll, Value: "CVE-2014-887,CVE-2014-888"},
-		&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsAll, Value: "CVE-2014-887,CVE-2016-001"},
-		&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsAll, Value: "CVE-2014-885,CVE-2014-886,CVE-2014-887,CVE-2014-888,CVE-2014-889"},
-		&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsOtherThan, Value: "CVE-2014-887,CVE-2014-888"},
-		&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsOtherThan, Value: "CVE-2014-887,CVE-2016-001"},
-		&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsOtherThan, Value: "CVE-2014-885,CVE-2014-886,CVE-2014-887,CVE-2014-888,CVE-2014-889"},
+		{Name: share.CriteriaKeyUser, Op: share.CriteriaOpContainsAny, Value: "jane,ted"},
+		{Name: share.CriteriaKeyUser, Op: share.CriteriaOpContainsAny, Value: "andrew,ted"},
+		{Name: share.CriteriaKeyUser, Op: share.CriteriaOpNotContainsAny, Value: "jane,ted"},
+		{Name: share.CriteriaKeyUser, Op: share.CriteriaOpNotContainsAny, Value: "andrew,ted"},
+		{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsAny, Value: "CVE-2014-887,CVE-2014-888"},
+		{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsAny, Value: "CVE-2014-002,CVE-2016-001"},
+		{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsAny, Value: "CVE-2014-885,CVE-2014-886,CVE-2014-887,CVE-2014-888,CVE-2014-889"},
+		{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpNotContainsAny, Value: "CVE-2014-887,CVE-2014-888"},
+		{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpNotContainsAny, Value: "CVE-2014-002,CVE-2016-001"},
+		{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpNotContainsAny, Value: "CVE-2014-885,CVE-2014-886,CVE-2014-887,CVE-2014-888,CVE-2014-889"},
+		{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsAll, Value: "CVE-2014-887,CVE-2014-888"},
+		{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsAll, Value: "CVE-2014-887,CVE-2016-001"},
+		{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsAll, Value: "CVE-2014-885,CVE-2014-886,CVE-2014-887,CVE-2014-888,CVE-2014-889"},
+		{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsOtherThan, Value: "CVE-2014-887,CVE-2014-888"},
+		{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsOtherThan, Value: "CVE-2014-887,CVE-2016-001"},
+		{Name: share.CriteriaKeyCVENames, Op: share.CriteriaOpContainsOtherThan, Value: "CVE-2014-885,CVE-2014-886,CVE-2014-887,CVE-2014-888,CVE-2014-889"},
 	}
 	valueSet1 := utils.NewSet("jane")
 	valueSet2 := utils.NewSet("CVE-2014-886", "CVE-2014-887", "CVE-2014-888")
 	expected := []ret{
-		ret{met: true, positive: true}, // for "user", CriteriaOpContainsAny
-		ret{met: false, positive: true},
-		ret{met: false, positive: false}, // for "user", CriteriaOpNotContainsAny
-		ret{met: true, positive: false},
-		ret{met: true, positive: true}, // for "cveNames", CriteriaOpContainsAny
-		ret{met: false, positive: true},
-		ret{met: true, positive: true},
-		ret{met: false, positive: false}, // for "cveNames", CriteriaOpNotContainsAny
-		ret{met: true, positive: false},
-		ret{met: false, positive: false},
-		ret{met: true, positive: true}, // for "cveNames", CriteriaOpContainsAll
-		ret{met: false, positive: true},
-		ret{met: false, positive: true},
-		ret{met: true, positive: true}, // for "cveNames", CriteriaOpContainsOtherThan
-		ret{met: true, positive: true},
-		ret{met: false, positive: true},
+		{met: true, positive: true}, // for "user", CriteriaOpContainsAny
+		{met: false, positive: true},
+		{met: false, positive: false}, // for "user", CriteriaOpNotContainsAny
+		{met: true, positive: false},
+		{met: true, positive: true}, // for "cveNames", CriteriaOpContainsAny
+		{met: false, positive: true},
+		{met: true, positive: true},
+		{met: false, positive: false}, // for "cveNames", CriteriaOpNotContainsAny
+		{met: true, positive: false},
+		{met: false, positive: false},
+		{met: true, positive: true}, // for "cveNames", CriteriaOpContainsAll
+		{met: false, positive: true},
+		{met: false, positive: true},
+		{met: true, positive: true}, // for "cveNames", CriteriaOpContainsOtherThan
+		{met: true, positive: true},
+		{met: false, positive: true},
 	}
 
 	var met, positive bool
@@ -650,22 +1130,22 @@ func TestIsSetCriterionMet(t *testing.T) {
 
 	valueSet3 := utils.NewSet()
 	expected3 := []ret{
-		ret{met: false, positive: true}, // for "user", CriteriaOpContainsAny
-		ret{met: false, positive: true},
-		ret{met: true, positive: false}, // for "user", CriteriaOpNotContainsAny
-		ret{met: true, positive: false},
-		ret{met: false, positive: true}, // for "cveNames", CriteriaOpContainsAny
-		ret{met: false, positive: true},
-		ret{met: false, positive: true},
-		ret{met: true, positive: false}, // for "cveNames", CriteriaOpNotContainsAny
-		ret{met: true, positive: false},
-		ret{met: true, positive: false},
-		ret{met: false, positive: true}, // for "cveNames", CriteriaOpContainsAll
-		ret{met: false, positive: true},
-		ret{met: false, positive: true},
-		ret{met: false, positive: true}, // for "cveNames", CriteriaOpContainsOtherThan
-		ret{met: false, positive: true},
-		ret{met: false, positive: true},
+		{met: false, positive: true}, // for "user", CriteriaOpContainsAny
+		{met: false, positive: true},
+		{met: true, positive: false}, // for "user", CriteriaOpNotContainsAny
+		{met: true, positive: false},
+		{met: false, positive: true}, // for "cveNames", CriteriaOpContainsAny
+		{met: false, positive: true},
+		{met: false, positive: true},
+		{met: true, positive: false}, // for "cveNames", CriteriaOpNotContainsAny
+		{met: true, positive: false},
+		{met: true, positive: false},
+		{met: false, positive: true}, // for "cveNames", CriteriaOpContainsAll
+		{met: false, positive: true},
+		{met: false, positive: true},
+		{met: false, positive: true}, // for "cveNames", CriteriaOpContainsOtherThan
+		{met: false, positive: true},
+		{met: false, positive: true},
 	}
 	for idx, crt := range criteria {
 		crt.ValueSlice = strings.Split(crt.Value, ",")
@@ -684,11 +1164,6 @@ func TestIsSetCriterionMet(t *testing.T) {
 
 func TestIsSetCriterionMet2(t *testing.T) {
 	preTest()
-
-	type ret struct {
-		met      bool
-		positive bool
-	}
 
 	{
 		crit1 := &share.CLUSAdmRuleCriterion{
@@ -839,7 +1314,7 @@ func TestIsHighCveWithFixCriterionMet(t *testing.T) {
 		Op:    share.CriteriaOpBiggerEqualThan,
 		Value: "1",
 		SubCriteria: []*share.CLUSAdmRuleCriterion{
-			&share.CLUSAdmRuleCriterion{
+			{
 				Name:  share.SubCriteriaPublishDays,
 				Op:    share.CriteriaOpBiggerEqualThan,
 				Value: "1",
@@ -864,57 +1339,57 @@ func TestIsHighCveWithFixCriterionMet(t *testing.T) {
 	}
 
 	expected1 := []*testMatchResult{ // vul has no fix
-		&testMatchResult{ // for crt1
+		{ // for crt1
 			expectedMet:      false,
 			expectedPositive: true,
 		},
-		&testMatchResult{ // for crt2
+		{ // for crt2
 			expectedMet:      false,
 			expectedPositive: true,
 		},
-		&testMatchResult{ // for crt3. in test-1 vulInfo is nil so we assume the scan summary as from pre-3.2.2 that doesn't contain HighVulInfo/MediumVulInfo & treat it as always met for SubCriteriaPublishDays criterion
+		{ // for crt3. in test-1 vulInfo is nil so we assume the scan summary as from pre-3.2.2 that doesn't contain HighVulInfo/MediumVulInfo & treat it as always met for SubCriteriaPublishDays criterion
 			expectedMet:      true,
 			expectedPositive: true,
 		},
 	}
 	expected2 := []*testMatchResult{ // vul has no fix
-		&testMatchResult{ // for crt1
+		{ // for crt1
 			expectedMet:      false,
 			expectedPositive: true,
 		},
-		&testMatchResult{ // for crt2
+		{ // for crt2
 			expectedMet:      false,
 			expectedPositive: true,
 		},
-		&testMatchResult{ // for crt3
+		{ // for crt3
 			expectedMet:      false,
 			expectedPositive: true,
 		},
 	}
 	expected3 := []*testMatchResult{ // vul has no fix
-		&testMatchResult{ // for crt1
+		{ // for crt1
 			expectedMet:      false,
 			expectedPositive: true,
 		},
-		&testMatchResult{ // for crt2
+		{ // for crt2
 			expectedMet:      false,
 			expectedPositive: true,
 		},
-		&testMatchResult{ // for crt3
+		{ // for crt3
 			expectedMet:      false,
 			expectedPositive: true,
 		},
 	}
 	expected4 := []*testMatchResult{ // vul has fix
-		&testMatchResult{ // for crt1
+		{ // for crt1
 			expectedMet:      true,
 			expectedPositive: true,
 		},
-		&testMatchResult{ // for crt2
+		{ // for crt2
 			expectedMet:      true,
 			expectedPositive: true,
 		},
-		&testMatchResult{ // for crt3
+		{ // for crt3
 			expectedMet:      true,
 			expectedPositive: true,
 		},
@@ -954,10 +1429,10 @@ func TestIsLabelCriterionMet1(t *testing.T) {
 	preTest()
 
 	crtss := [][]*share.CLUSAdmRuleCriterion{
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAny, Value: "owner=*"}},
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAll, Value: "owner=*"}},
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpNotContainsAny, Value: "owner=*"}},
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsOtherThan, Value: "owner=*"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAny, Value: "owner=*"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAll, Value: "owner=*"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpNotContainsAny, Value: "owner=*"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsOtherThan, Value: "owner=*"}},
 	}
 	for _, crts := range crtss {
 		for _, crt := range crts {
@@ -970,7 +1445,7 @@ func TestIsLabelCriterionMet1(t *testing.T) {
 		matchedSource string // because we do union(yaml label, image labels) before comparison, we don't try to say the matched data is from which one
 	}
 	expected := [][]*typeExpected{
-		[]*typeExpected{ // for CriteriaOpContainsAny
+		{ // for CriteriaOpContainsAny
 			&typeExpected{matched: false, matchedSource: ""},
 			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
 			&typeExpected{matched: false, matchedSource: ""},
@@ -978,7 +1453,7 @@ func TestIsLabelCriterionMet1(t *testing.T) {
 			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
 			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
 		},
-		[]*typeExpected{ // for CriteriaOpContainsAll
+		{ // for CriteriaOpContainsAll
 			&typeExpected{matched: false, matchedSource: ""},
 			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
 			&typeExpected{matched: false, matchedSource: ""},
@@ -986,7 +1461,7 @@ func TestIsLabelCriterionMet1(t *testing.T) {
 			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
 			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
 		},
-		[]*typeExpected{ // for CriteriaOpNotContainsAny
+		{ // for CriteriaOpNotContainsAny
 			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
 			&typeExpected{matched: false, matchedSource: ""},
 			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
@@ -994,7 +1469,7 @@ func TestIsLabelCriterionMet1(t *testing.T) {
 			&typeExpected{matched: false, matchedSource: ""},
 			&typeExpected{matched: false, matchedSource: ""},
 		},
-		[]*typeExpected{ // for CriteriaOpContainsOtherThan
+		{ // for CriteriaOpContainsOtherThan
 			&typeExpected{matched: false, matchedSource: ""},
 			&typeExpected{matched: false, matchedSource: ""},
 			&typeExpected{matched: false, matchedSource: ""},
@@ -1005,28 +1480,28 @@ func TestIsLabelCriterionMet1(t *testing.T) {
 	}
 
 	admResObjects := []*nvsysadmission.AdmResObject{
-		&nvsysadmission.AdmResObject{
+		{
 			Labels: nil,
 		},
-		&nvsysadmission.AdmResObject{
+		{
 			Labels: map[string]string{
 				"owner": "*",
 			},
 		},
 	}
-	cs := []*nvsysadmission.AdmContainerInfo{&nvsysadmission.AdmContainerInfo{}}
+	cs := []*nvsysadmission.AdmContainerInfo{{}}
 	scannedImages := []*nvsysadmission.ScannedImageSummary{
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: true,
 			Labels:  nil,
 		},
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: true,
 			Labels: map[string]string{
 				"owner": "*",
 			},
 		},
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: false,
 		},
 	}
@@ -1057,10 +1532,10 @@ func TestIsLabelCriterionMet2(t *testing.T) {
 	preTest()
 
 	crtss := [][]*share.CLUSAdmRuleCriterion{
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAny, Value: "owner=*"}},
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAll, Value: "owner=*"}},
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpNotContainsAny, Value: "owner=*"}},
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsOtherThan, Value: "owner=*"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAny, Value: "owner=*"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAll, Value: "owner=*"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpNotContainsAny, Value: "owner=*"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsOtherThan, Value: "owner=*"}},
 	}
 	for _, crts := range crtss {
 		for _, crt := range crts {
@@ -1073,65 +1548,65 @@ func TestIsLabelCriterionMet2(t *testing.T) {
 		matchedSource string // because we do union(yaml label, image labels) before comparison, we don't try to say the matched data is from which one
 	}
 	expected := [][]*typeExpected{
-		[]*typeExpected{ // for CriteriaOpContainsAny
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
+		{ // for CriteriaOpContainsAny
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcResourceLabels},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: true, matchedSource: _matchedSrcResourceLabels},
 		},
-		[]*typeExpected{ // for CriteriaOpContainsAll
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
+		{ // for CriteriaOpContainsAll
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcResourceLabels},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: true, matchedSource: _matchedSrcResourceLabels},
 		},
-		[]*typeExpected{ // for CriteriaOpNotContainsAny
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
+		{ // for CriteriaOpNotContainsAny
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
 		},
-		[]*typeExpected{ // for CriteriaOpContainsOtherThan
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
+		{ // for CriteriaOpContainsOtherThan
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcResourceLabels},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: true, matchedSource: _matchedSrcResourceLabels},
 		},
 	}
 
 	admResObjects := []*nvsysadmission.AdmResObject{
-		&nvsysadmission.AdmResObject{
+		{
 			Labels: nil,
 		},
-		&nvsysadmission.AdmResObject{
+		{
 			Labels: map[string]string{
 				"owner": "*",
 				"app":   "test",
 			},
 		},
 	}
-	cs := []*nvsysadmission.AdmContainerInfo{&nvsysadmission.AdmContainerInfo{}}
+	cs := []*nvsysadmission.AdmContainerInfo{{}}
 	scannedImages := []*nvsysadmission.ScannedImageSummary{
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: true,
 			Labels:  nil,
 		},
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: true,
 			Labels: map[string]string{
 				"owner": "*",
 				"app":   "test",
 			},
 		},
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: false,
 		},
 	}
@@ -1161,10 +1636,11 @@ func TestIsLabelCriterionMet2(t *testing.T) {
 func TestIsLabelCriterionMet3(t *testing.T) {
 	preTest()
 
-	crtss := [][]*share.CLUSAdmRuleCriterion{[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAny, Value: "owner=*,app=server"}},
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAll, Value: "owner=*,app=server"}},
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpNotContainsAny, Value: "owner=*,app=server"}},
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsOtherThan, Value: "owner=*,app=server"}},
+	crtss := [][]*share.CLUSAdmRuleCriterion{
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAny, Value: "owner=*,app=server"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAll, Value: "owner=*,app=server"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpNotContainsAny, Value: "owner=*,app=server"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsOtherThan, Value: "owner=*,app=server"}},
 	}
 	for _, crts := range crtss {
 		for _, crt := range crts {
@@ -1177,65 +1653,65 @@ func TestIsLabelCriterionMet3(t *testing.T) {
 		matchedSource string // because we do union(yaml label, image labels) before comparison, we don't try to say the matched data is from which one
 	}
 	expected := [][]*typeExpected{
-		[]*typeExpected{ // for CriteriaOpContainsAny
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
+		{ // for CriteriaOpContainsAny
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcResourceLabels},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: true, matchedSource: _matchedSrcResourceLabels},
 		},
-		[]*typeExpected{ // for CriteriaOpContainsAll
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
+		{ // for CriteriaOpContainsAll
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
 		},
-		[]*typeExpected{ // for CriteriaOpNotContainsAny
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
+		{ // for CriteriaOpNotContainsAny
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
 		},
-		[]*typeExpected{ // for CriteriaOpContainsOtherThan
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
+		{ // for CriteriaOpContainsOtherThan
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcResourceLabels},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: true, matchedSource: _matchedSrcResourceLabels},
 		},
 	}
 
 	admResObjects := []*nvsysadmission.AdmResObject{
-		&nvsysadmission.AdmResObject{
+		{
 			Labels: nil,
 		},
-		&nvsysadmission.AdmResObject{
+		{
 			Labels: map[string]string{
 				"owner": "*",
 				"app":   "test",
 			},
 		},
 	}
-	cs := []*nvsysadmission.AdmContainerInfo{&nvsysadmission.AdmContainerInfo{}}
+	cs := []*nvsysadmission.AdmContainerInfo{{}}
 	scannedImages := []*nvsysadmission.ScannedImageSummary{
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: true,
 			Labels:  nil,
 		},
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: true,
 			Labels: map[string]string{
 				"owner": "*",
 				"app":   "test",
 			},
 		},
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: false,
 		},
 	}
@@ -1266,10 +1742,10 @@ func TestIsLabelCriterionMet4(t *testing.T) {
 	preTest()
 
 	crtss := [][]*share.CLUSAdmRuleCriterion{
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAny, Value: "owner"}},
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAll, Value: "owner"}},
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpNotContainsAny, Value: "owner"}},
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsOtherThan, Value: "owner"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAny, Value: "owner"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAll, Value: "owner"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpNotContainsAny, Value: "owner"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsOtherThan, Value: "owner"}},
 	}
 	for _, crts := range crtss {
 		for _, crt := range crts {
@@ -1282,86 +1758,86 @@ func TestIsLabelCriterionMet4(t *testing.T) {
 		matchedSource string // because we do union(yaml label, image labels) before comparison, we don't try to say the matched data is from which one
 	}
 	expected := [][]*typeExpected{
-		[]*typeExpected{ // for CriteriaOpContainsAny
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
+		{ // for CriteriaOpContainsAny
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcResourceLabels},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: true, matchedSource: _matchedSrcResourceLabels},
 		},
-		[]*typeExpected{ // for CriteriaOpContainsAll
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
+		{ // for CriteriaOpContainsAll
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcResourceLabels},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: true, matchedSource: _matchedSrcResourceLabels},
 		},
-		[]*typeExpected{ // for CriteriaOpNotContainsAny
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
+		{ // for CriteriaOpNotContainsAny
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
 		},
-		[]*typeExpected{ // for CriteriaOpContainsOtherThan
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: false, matchedSource: ""},
+		{ // for CriteriaOpContainsOtherThan
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: false, matchedSource: ""},
 		},
 	}
 
 	admResObjects := []*nvsysadmission.AdmResObject{
-		&nvsysadmission.AdmResObject{
+		{
 			Labels: nil,
 		},
-		&nvsysadmission.AdmResObject{
+		{
 			Labels: map[string]string{
 				"owner": "joe",
 			},
 		},
 	}
-	cs := []*nvsysadmission.AdmContainerInfo{&nvsysadmission.AdmContainerInfo{}}
+	cs := []*nvsysadmission.AdmContainerInfo{{}}
 	scannedImages := []*nvsysadmission.ScannedImageSummary{
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: true,
 			Labels:  nil,
 		},
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: true,
 			Labels: map[string]string{
 				"owner": "joe",
 			},
 		},
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: true,
 			Labels: map[string]string{
 				"owner": "joe",
 				"app":   "proxy",
 			},
 		},
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: true,
 			Labels: map[string]string{
 				"owner": "joe",
@@ -1369,7 +1845,7 @@ func TestIsLabelCriterionMet4(t *testing.T) {
 				"skip":  "yes",
 			},
 		},
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: false,
 		},
 	}
@@ -1400,10 +1876,10 @@ func TestIsLabelCriterionMet5(t *testing.T) {
 	preTest()
 
 	crtss := [][]*share.CLUSAdmRuleCriterion{
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAny, Value: "owner,app"}},
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAll, Value: "owner,app"}},
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpNotContainsAny, Value: "owner,app"}},
-		[]*share.CLUSAdmRuleCriterion{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsOtherThan, Value: "owner,app"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAny, Value: "owner,app"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsAll, Value: "owner,app"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpNotContainsAny, Value: "owner,app"}},
+		{&share.CLUSAdmRuleCriterion{Name: share.CriteriaKeyLabels, Op: share.CriteriaOpContainsOtherThan, Value: "owner,app"}},
 	}
 	for _, crts := range crtss {
 		for _, crt := range crts {
@@ -1416,86 +1892,86 @@ func TestIsLabelCriterionMet5(t *testing.T) {
 		matchedSource string // because we do union(yaml label, image labels) before comparison, we don't try to say the matched data is from which one
 	}
 	expected := [][]*typeExpected{
-		[]*typeExpected{ // for CriteriaOpContainsAny
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcResourceLabels},
+		{ // for CriteriaOpContainsAny
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcResourceLabels},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: true, matchedSource: _matchedSrcResourceLabels},
 		},
-		[]*typeExpected{ // for CriteriaOpContainsAll
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: false, matchedSource: ""},
+		{ // for CriteriaOpContainsAll
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: false, matchedSource: ""},
 		},
-		[]*typeExpected{ // for CriteriaOpNotContainsAny
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
+		{ // for CriteriaOpNotContainsAny
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
 		},
-		[]*typeExpected{ // for CriteriaOpContainsOtherThan
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcImageLabels},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: false, matchedSource: ""},
-			&typeExpected{matched: true, matchedSource: _matchedSrcBothLabels},
-			&typeExpected{matched: false, matchedSource: ""},
+		{ // for CriteriaOpContainsOtherThan
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcImageLabels},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: false, matchedSource: ""},
+			{matched: true, matchedSource: _matchedSrcBothLabels},
+			{matched: false, matchedSource: ""},
 		},
 	}
 
 	admResObjects := []*nvsysadmission.AdmResObject{
-		&nvsysadmission.AdmResObject{
+		{
 			Labels: nil,
 		},
-		&nvsysadmission.AdmResObject{
+		{
 			Labels: map[string]string{
 				"owner": "joe",
 			},
 		},
 	}
-	cs := []*nvsysadmission.AdmContainerInfo{&nvsysadmission.AdmContainerInfo{}}
+	cs := []*nvsysadmission.AdmContainerInfo{{}}
 	scannedImages := []*nvsysadmission.ScannedImageSummary{
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: true,
 			Labels:  nil,
 		},
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: true,
 			Labels: map[string]string{
 				"owner": "joe",
 			},
 		},
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: true,
 			Labels: map[string]string{
 				"owner": "joe",
 				"app":   "proxy",
 			},
 		},
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: true,
 			Labels: map[string]string{
 				"owner": "joe",
@@ -1503,7 +1979,7 @@ func TestIsLabelCriterionMet5(t *testing.T) {
 				"skip":  "yes",
 			},
 		},
-		&nvsysadmission.ScannedImageSummary{
+		{
 			Scanned: false,
 		},
 	}
@@ -1695,7 +2171,7 @@ func TestIsAnnotationCriterionMet(t *testing.T) {
 			},
 		},
 	}
-	cs := []*nvsysadmission.AdmContainerInfo{&nvsysadmission.AdmContainerInfo{}}
+	cs := []*nvsysadmission.AdmContainerInfo{{}}
 	for _, rule_tcs := range expected {
 		for _, tc := range rule_tcs.tcs {
 			matched, _ := isAdmissionRuleMet(&tc.obj, cs[0], nil, rule_tcs.rule, false, nil, 0)
@@ -1716,7 +2192,7 @@ func TestIsUserGroupCriterionMet(t *testing.T) {
 	}
 
 	crts := []*share.CLUSAdmRuleCriterion{
-		&share.CLUSAdmRuleCriterion{
+		{
 			Name:  share.CriteriaKeyK8sGroups,
 			Op:    share.CriteriaOpRegex,
 			Value: "[1-9]{1,5}",
@@ -1724,7 +2200,7 @@ func TestIsUserGroupCriterionMet(t *testing.T) {
 	}
 	userGroups := []string{"65535", "abcde"}
 	expected := []matchResult{
-		matchResult{met: true, positive: true},
+		{met: true, positive: true},
 	}
 	valueSet := utils.NewSetFromStringSlice(userGroups)
 	for idx, crt := range crts {
@@ -1738,7 +2214,7 @@ func TestIsUserGroupCriterionMet(t *testing.T) {
 
 	userGroups = []string{"abcde"}
 	expected = []matchResult{
-		matchResult{met: false, positive: true},
+		{met: false, positive: true},
 	}
 	valueSet = utils.NewSetFromStringSlice(userGroups)
 	for idx, crt := range crts {

@@ -103,9 +103,9 @@ const (
 	regTestLongPollTimeout   = time.Second * 30
 )
 
-type imageSchema struct {
-	Version int `json:"schemaVersion"`
-}
+// type imageSchema struct {
+// 	Version int `json:"schemaVersion"`
+// }
 
 var regTestMgr *longpollManyMgr
 var regTestMap map[string]*regTestTask
@@ -122,9 +122,9 @@ type regTracer struct {
 	isManifest bool
 }
 
-func (t regTracer) format(m string) string {
-	return fmt.Sprintf("%.[2]*[1]s", m, maxMessageSize)
-}
+// func (t regTracer) format(m string) string {
+// 	return fmt.Sprintf("%.[2]*[1]s", m, maxMessageSize)
+// }
 
 func (t *regTracer) SetPhase(message string) {
 	t.steps = append(t.steps, &api.RESTRegistryTestStep{
@@ -206,7 +206,9 @@ func (r *regTestTask) Run(arg interface{}, signal SignalFunc) {
 		steps:  make([]*api.RESTRegistryTestStep, 0),
 	}
 
-	scanner.TestRegistry(ctx, config, r.tracer)
+	if err := scanner.TestRegistry(ctx, config, r.tracer); err != nil {
+		log.WithFields(log.Fields{"error": err}).Debug("TestRegistry")
+	}
 }
 
 func (r *regTestTask) Delete() {
@@ -224,7 +226,7 @@ func handlerRegistryTest(w http.ResponseWriter, r *http.Request, ps httprouter.P
 		return
 	}
 
-	if licenseAllowScan() != true {
+	if !licenseAllowScan() {
 		restRespError(w, http.StatusBadRequest, api.RESTErrLicenseFail)
 		return
 	}
@@ -385,7 +387,7 @@ func handlerRegistryTestCancel(w http.ResponseWriter, r *http.Request, ps httpro
 		return
 	}
 
-	if licenseAllowScan() != true {
+	if !licenseAllowScan() {
 		restRespError(w, http.StatusBadRequest, api.RESTErrLicenseFail)
 		return
 	}
