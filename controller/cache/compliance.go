@@ -106,9 +106,7 @@ func buildComplianceFilter(ccp *share.CLUSComplianceProfile) map[string][]string
 	for _, m := range metaMap {
 		if _, ok := filter[m.TestNum]; !ok {
 			var complianceTags []string
-			for _, compliance := range m.Tags {
-				complianceTags = append(complianceTags, compliance)
-			}
+			complianceTags = append(complianceTags, m.Tags...)
 			filter[m.TestNum] = complianceTags
 		}
 	}
@@ -201,11 +199,11 @@ type wlMini struct {
 
 type podVuls struct {
 	CriticalVuls int
-	HighVuls int
-	MedVuls int
+	HighVuls     int
+	MedVuls      int
 }
 
-func (m CacheMethod) GetRiskScoreMetrics(acc, accCaller *access.AccessControl) *api.RESTInternalSystemData {
+func (m CacheMethod) GetRiskScoreMetrics(acc, accCaller *access.AccessControl) *api.RESTScoreMetricsData {
 	var s api.RESTRiskScoreMetrics
 
 	s.Platform, s.K8sVersion, s.OCVersion = m.GetPlatform()
@@ -515,14 +513,14 @@ func (m CacheMethod) GetRiskScoreMetrics(acc, accCaller *access.AccessControl) *
 	}
 	cacheMutexRUnlock()
 
-	return &api.RESTInternalSystemData{Metrics: &s, Ingress: ins, Egress: outs}
+	return &api.RESTScoreMetricsData{Metrics: &s, Ingress: ins, Egress: outs}
 }
 
 // ---
 
 func benchHostDelete(id string, param interface{}) {
-	cluster.DeleteTree(share.CLUSBenchKey(id))
-	cluster.Delete(share.CLUSBenchStateHostKey(id))
+	_ = cluster.DeleteTree(share.CLUSBenchKey(id))
+	_ = cluster.Delete(share.CLUSBenchStateHostKey(id))
 }
 
 func benchAgentOnline(id string, param interface{}) {
@@ -547,7 +545,7 @@ func benchStateHandler(nType cluster.ClusterNotifyType, key string, value []byte
 	cctx.ScanLog.WithFields(log.Fields{"type": cluster.ClusterNotifyName[nType], "key": key}).Debug()
 
 	if nType == cluster.ClusterNotifyDelete {
-		db.DeleteBenchByID(share.CLUSBenchStateKey2ID(key))
+		_ = db.DeleteBenchByID(share.CLUSBenchStateKey2ID(key))
 		return
 	}
 

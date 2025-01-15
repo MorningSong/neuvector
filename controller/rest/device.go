@@ -17,7 +17,7 @@ import (
 	"github.com/neuvector/neuvector/share/cluster"
 )
 
-const clusterWaitPeriod int = 5
+// const clusterWaitPeriod int = 5
 
 func handlerControllerList(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	log.WithFields(log.Fields{"URL": r.URL.String()}).Debug("")
@@ -411,7 +411,9 @@ func handlerControllerConfig(w http.ResponseWriter, r *http.Request, ps httprout
 		// Retrieve from the cluster
 		value, rev, _ := cluster.GetRev(key)
 		if value != nil {
-			json.Unmarshal(value, &cconf)
+			if err := json.Unmarshal(value, &cconf); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("Unmarshal")
+			}
 		}
 
 		if rconf.Config.Debug != nil {
@@ -421,8 +423,8 @@ func handlerControllerConfig(w http.ResponseWriter, r *http.Request, ps httprout
 		if rconf.Config.LogLevel != nil {
 			cconf.LogLevel = *rconf.Config.LogLevel
 			if cconf.LogLevel == share.LogLevel_Error ||
-			   cconf.LogLevel == share.LogLevel_Warn ||
-			   cconf.LogLevel == share.LogLevel_Info {
+				cconf.LogLevel == share.LogLevel_Warn ||
+				cconf.LogLevel == share.LogLevel_Info {
 				cconf.Debug = nil
 			} else if cconf.LogLevel == share.LogLevel_Debug {
 				if cconf.Debug == nil {
@@ -443,7 +445,12 @@ func handlerControllerConfig(w http.ResponseWriter, r *http.Request, ps httprout
 			return
 		}
 
-		value, _ = json.Marshal(&cconf)
+		value, err = json.Marshal(&cconf)
+		if err != nil {
+			restRespError(w, http.StatusInternalServerError, api.RESTErrFailWriteCluster)
+			return
+		}
+
 		if err = cluster.PutRev(key, value, rev); err != nil {
 			log.WithFields(log.Fields{"error": err, "rev": rev}).Error("")
 			retry++
@@ -520,7 +527,9 @@ func handlerAgentConfig(w http.ResponseWriter, r *http.Request, ps httprouter.Pa
 		// Retrieve from the cluster
 		value, rev, _ := cluster.GetRev(key)
 		if value != nil {
-			json.Unmarshal(value, &cconf)
+			if err := json.Unmarshal(value, &cconf); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("Unmarshal")
+			}
 		}
 
 		if rconf.Config.Debug != nil {
@@ -538,8 +547,8 @@ func handlerAgentConfig(w http.ResponseWriter, r *http.Request, ps httprouter.Pa
 		if rconf.Config.LogLevel != nil {
 			cconf.LogLevel = *rconf.Config.LogLevel
 			if cconf.LogLevel == share.LogLevel_Error ||
-			   cconf.LogLevel == share.LogLevel_Warn ||
-			   cconf.LogLevel == share.LogLevel_Info {
+				cconf.LogLevel == share.LogLevel_Warn ||
+				cconf.LogLevel == share.LogLevel_Info {
 				cconf.Debug = nil
 			} else if cconf.LogLevel == share.LogLevel_Debug {
 				if cconf.Debug == nil {

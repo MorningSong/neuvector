@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/neuvector/neuvector/controller/access"
 	"github.com/neuvector/neuvector/controller/api"
@@ -16,16 +15,13 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const wafCalculatingDelayFast = time.Duration(time.Second * 2)
-const wafCalculatingDelaySlow = time.Duration(time.Second * 4)
-
 var wafSensors map[string]*share.CLUSWafSensor = make(map[string]*share.CLUSWafSensor) //sensor name to sensor map
 var wafRuleSensors map[string]utils.Set = make(map[string]utils.Set)                   //key is rule entry name, value is sensor name(currently one rule can be in one sensor only)
 var wafGroupSensors map[string]utils.Set = make(map[string]utils.Set)                  //key is group name, value is sensors' name, active or not
 var wafGroups map[string]*share.CLUSWafGroup = make(map[string]*share.CLUSWafGroup)    //key is group name, value is group's waf setting that contain sensors' name/action
 var wafIdRule map[uint32]string = make(map[uint32]string)                              //key is rule id, value is rule name
 
-//update waf rule from config
+// update waf rule from config
 func wafRuleConfigUpdate(nType cluster.ClusterNotifyType, key string, value []byte) {
 	sensor := share.CLUSWafRuleKey2Name(key)
 	switch nType {
@@ -56,7 +52,7 @@ func wafRuleConfigUpdate(nType cluster.ClusterNotifyType, key string, value []by
 				wafRuleSensors[cdrename].Add(sensor)
 			}
 		} else {
-			for id, _ := range wafIdRule {
+			for id := range wafIdRule {
 				delete(wafIdRule, id)
 			}
 			if wafIdRule == nil {
@@ -68,7 +64,7 @@ func wafRuleConfigUpdate(nType cluster.ClusterNotifyType, key string, value []by
 				}
 			}
 			for _, cdrl := range wafsensor.PreRuleList {
-				if cdrl != nil && len(cdrl) > 0 {
+				if len(cdrl) > 0 {
 					wafIdRule[cdrl[0].ID] = cdrl[0].Name
 				}
 			}
@@ -77,7 +73,7 @@ func wafRuleConfigUpdate(nType cluster.ClusterNotifyType, key string, value []by
 		//sync with CLUSGroup
 		syncWafClusGroup(sensor)
 
-		for cg, _ := range wafsensor.Groups {
+		for cg := range wafsensor.Groups {
 			//group to sensors map
 			if wafGroupSensors[cg] == nil {
 				wafGroupSensors[cg] = utils.NewSet()
@@ -93,7 +89,7 @@ func wafRuleConfigUpdate(nType cluster.ClusterNotifyType, key string, value []by
 		updategrp := false
 		cacheMutexLock()
 		if wafsensor, ok := wafSensors[sensor]; ok {
-			for cg, _ := range wafsensor.Groups {
+			for cg := range wafsensor.Groups {
 				if wafGroupSensors[cg] != nil && wafGroupSensors[cg].Contains(sensor) {
 					updategrp = true
 				}
@@ -114,8 +110,7 @@ func wafRuleConfigUpdate(nType cluster.ClusterNotifyType, key string, value []by
 }
 
 func isCreateWafGroup(group *share.CLUSGroup) bool {
-	if group == nil || group.Kind != share.GroupKindContainer ||
-		strings.HasPrefix(group.Name, api.FederalGroupPrefix) {
+	if group == nil || group.Kind != share.GroupKindContainer {
 		return false
 	}
 	if _, ok := wafGroups[group.Name]; !ok {
@@ -126,6 +121,11 @@ func isCreateWafGroup(group *share.CLUSGroup) bool {
 }
 
 func createWafGroup(group string, cfgType share.TCfgType) {
+	cg := clusHelper.GetWafGroup(group) //cover federal promotion case
+	if cg != nil {
+		log.WithFields(log.Fields{"group": group}).Debug("Waf group already exist")
+		return
+	}
 	wafgroup := &share.CLUSWafGroup{
 		Name:    group,
 		Status:  true,
@@ -204,18 +204,14 @@ func wafProcessGroupDel(group *share.CLUSWafGroup) {
 		for sen := range cgs.Iter() {
 			sname := sen.(string)
 			if dr, ok1 := wafSensors[sname]; ok1 {
-				if _, ok2 := dr.Groups[group.Name]; ok2 {
-					delete(dr.Groups, group.Name)
-				}
+				delete(dr.Groups, group.Name)
 			}
 		}
 		wafGroupSensors[group.Name].Clear()
 	}
 	for _, sen := range group.Sensors {
 		if dr, ok := wafSensors[sen.Name]; ok {
-			if _, ok1 := dr.Groups[group.Name]; ok1 {
-				delete(dr.Groups, group.Name)
-			}
+			delete(dr.Groups, group.Name)
 		}
 	}
 }
@@ -224,9 +220,7 @@ func wafProcessGroup(group *share.CLUSWafGroup) {
 		for sen := range cgs.Iter() {
 			sname := sen.(string)
 			if dr, ok1 := wafSensors[sname]; ok1 {
-				if _, ok2 := dr.Groups[group.Name]; ok2 {
-					delete(dr.Groups, group.Name)
-				}
+				delete(dr.Groups, group.Name)
 			}
 		}
 		wafGroupSensors[group.Name].Clear()
@@ -261,9 +255,7 @@ func wafProcessGroup(group *share.CLUSWafGroup) {
 	} else { //delete waf sensors for group
 		for _, sen := range group.Sensors {
 			if dr, ok := wafSensors[sen.Name]; ok {
-				if _, ok1 := dr.Groups[group.Name]; ok1 {
-					delete(dr.Groups, group.Name)
-				}
+				delete(dr.Groups, group.Name)
 			}
 		}
 		if sensors, ok := wafGroupSensors[group.Name]; ok && sensors != nil {
@@ -525,13 +517,11 @@ func listWafRuleEntriesForSens(wafrulemap map[string][]*share.CLUSWafRule, dsens
 						wafrulemap[cdre.Name] = append(wafrulemap[cdre.Name], cdre)
 					} else { //predefined rule
 						cdrelist := getPreWafRuleFromDefaultSensor(cdrename)
-						if cdrelist != nil {
-							for _, cdre := range cdrelist {
-								if wafrulemap[cdre.Name] == nil {
-									wafrulemap[cdre.Name] = make([]*share.CLUSWafRule, 0)
-								}
-								wafrulemap[cdre.Name] = append(wafrulemap[cdre.Name], cdre)
+						for _, cdre := range cdrelist {
+							if wafrulemap[cdre.Name] == nil {
+								wafrulemap[cdre.Name] = make([]*share.CLUSWafRule, 0)
 							}
+							wafrulemap[cdre.Name] = append(wafrulemap[cdre.Name], cdre)
 						}
 					}
 				}
@@ -558,9 +548,7 @@ func reOrgWafWlRules(wl2rules, outside_wl2rules map[string]map[string]string, ou
 				}
 			}
 			delete(outside_wl2rules, wlid)
-			if _, ok2 := outside_wl2policies[wlid]; ok2 {
-				delete(outside_wl2policies, wlid)
-			}
+			delete(outside_wl2policies, wlid)
 		}
 	}
 }
@@ -594,6 +582,7 @@ func getWafWlRules(cgdrs *share.CLUSWorkloadDlpRules, wl2rules map[string]map[st
 	}
 }
 
+/*
 func printWafRuleMap(wafrulemap map[string][]*share.CLUSWafRule) {
 	for _, drelist := range wafrulemap {
 		for _, dre := range drelist {
@@ -613,6 +602,7 @@ func printDefaultWafRules(cgdrs *share.CLUSWorkloadDlpRules) {
 		}
 	}
 }
+*/
 
 func calculateGroupWafRulesFromCache() share.CLUSWorkloadDlpRules {
 	log.Debug("")
@@ -652,12 +642,7 @@ func calculateGroupWafRulesFromCache() share.CLUSWorkloadDlpRules {
 				Patterns: make([]share.CLUSDlpCriteriaEntry, 0),
 			}
 			for _, cpt := range dre.Patterns {
-				tdre.Patterns = append(tdre.Patterns, share.CLUSDlpCriteriaEntry{
-					Key:     cpt.Key,
-					Value:   cpt.Value,
-					Op:      cpt.Op,
-					Context: cpt.Context,
-				})
+				tdre.Patterns = append(tdre.Patterns, share.CLUSDlpCriteriaEntry(cpt))
 			}
 			cgdrs.DlpRuleList = append(cgdrs.DlpRuleList, tdre)
 		}
@@ -671,15 +656,15 @@ func calculateGroupWafRulesFromCache() share.CLUSWorkloadDlpRules {
 	return cgdrs
 }
 
-//if sensor is used by group, it cannot be deleted
-//so delete a sensor no need to propagate to enforcer
+// if sensor is used by group, it cannot be deleted
+// so delete a sensor no need to propagate to enforcer
 func deleteWafRuleNetwork(sensor string) {
 	if !isLeader() {
 		return
 	}
 	log.WithFields(log.Fields{"sensor": sensor}).Debug("")
 	key := share.CLUSWafRuleKey(sensor)
-	cluster.Delete(key)
+	_ = cluster.Delete(key)
 }
 
 func getWafRuleFromDefaultSensor(entry string) *share.CLUSWafRule {
@@ -801,7 +786,7 @@ func (m *CacheMethod) GetWafSensor(sensor string, acc *access.AccessControl) (*a
 			CfgType:   cfgTypeMapping[cdr.CfgType],
 		}
 
-		for name, _ := range cdr.Groups {
+		for name := range cdr.Groups {
 			resp.GroupList = append(resp.GroupList, name)
 		}
 
@@ -901,7 +886,7 @@ func (m *CacheMethod) GetWafSensor(sensor string, acc *access.AccessControl) (*a
 	return nil, common.ErrObjectNotFound
 }
 
-//default sensor contains all waf rule entries, REST API for GUI
+// default sensor contains all waf rule entries, REST API for GUI
 func (m *CacheMethod) GetWafRules(acc *access.AccessControl) ([]*api.RESTWafRule, error) {
 	if sensor, err := m.GetWafSensor(share.CLUSWafDefaultSensor, acc); err != nil {
 		return nil, err
@@ -910,17 +895,36 @@ func (m *CacheMethod) GetWafRules(acc *access.AccessControl) ([]*api.RESTWafRule
 	}
 }
 
-func (m *CacheMethod) GetAllWafSensors(acc *access.AccessControl) []*api.RESTWafSensor {
+func (m *CacheMethod) GetAllWafSensors(scope string, acc *access.AccessControl) []*api.RESTWafSensor {
 	log.Debug("")
+	var getLocal, getFed bool
+	if scope == share.ScopeLocal {
+		getLocal = true
+	} else if scope == share.ScopeFed {
+		getFed = true
+	} else if scope == share.ScopeAll {
+		getLocal = true
+		getFed = true
+	} else {
+		return nil
+	}
 	cacheMutexRLock()
 	defer cacheMutexRUnlock()
 
+	localSensors := make([]*api.RESTWafSensor, 0)
+	fedSensors := make([]*api.RESTWafSensor, 0)
 	ret := make([]*api.RESTWafSensor, 0)
 	for _, cdr := range wafSensors {
 		if !acc.Authorize(cdr, nil) {
 			continue
 		}
 		if cdr.Name == share.CLUSWafDefaultSensor {
+			continue
+		}
+		if getLocal && !getFed && cdr.CfgType == share.FederalCfg {
+			continue
+		}
+		if getFed && !getLocal && cdr.CfgType != share.FederalCfg {
 			continue
 		}
 		resp := api.RESTWafSensor{
@@ -931,14 +935,14 @@ func (m *CacheMethod) GetAllWafSensors(acc *access.AccessControl) []*api.RESTWaf
 			Predefine: cdr.Predefine,
 			CfgType:   cfgTypeMapping[cdr.CfgType],
 		}
-		for name, _ := range cdr.Groups {
+		for name := range cdr.Groups {
 			resp.GroupList = append(resp.GroupList, name)
 		}
-		if cdr.Name == share.CLUSWafDefaultSensor {
-			//user created rule
-			for _, cdre := range cdr.RuleList {
+		for _, cdrename := range cdr.RuleListNames {
+			cdre := getWafRuleFromDefaultSensor(cdrename)
+			if cdre != nil {
 				rdre := &api.RESTWafRule{
-					Name:    cdre.Name,
+					Name:    common.GetOrigWafRuleName(cdre.Name),
 					ID:      cdre.ID,
 					CfgType: cfgTypeMapping[cdre.CfgType],
 				}
@@ -954,33 +958,9 @@ func (m *CacheMethod) GetAllWafSensors(acc *access.AccessControl) []*api.RESTWaf
 					})
 				}
 				resp.RuleList = append(resp.RuleList, rdre)
-			}
-			//predefined rule
-			for _, cdrelist := range cdr.PreRuleList {
+			} else { //try predefined rule
+				cdrelist := getPreWafRuleFromDefaultSensor(cdrename)
 				for _, cdre := range cdrelist {
-					rdre := &api.RESTWafRule{
-						Name:    cdre.Name,
-						ID:      cdre.ID,
-						CfgType: cfgTypeMapping[cdre.CfgType],
-					}
-					for _, cpt := range cdre.Patterns {
-						if cpt.Context == "" {
-							cpt.Context = share.DlpPatternContextDefault
-						}
-						rdre.Patterns = append(rdre.Patterns, api.RESTWafCriteriaEntry{
-							Key:     cpt.Key,
-							Value:   cpt.Value,
-							Op:      cpt.Op,
-							Context: cpt.Context,
-						})
-					}
-					resp.RuleList = append(resp.RuleList, rdre)
-				}
-			}
-		} else {
-			for _, cdrename := range cdr.RuleListNames {
-				cdre := getWafRuleFromDefaultSensor(cdrename)
-				if cdre != nil {
 					rdre := &api.RESTWafRule{
 						Name:    common.GetOrigWafRuleName(cdre.Name),
 						ID:      cdre.ID,
@@ -998,35 +978,21 @@ func (m *CacheMethod) GetAllWafSensors(acc *access.AccessControl) []*api.RESTWaf
 						})
 					}
 					resp.RuleList = append(resp.RuleList, rdre)
-				} else { //try predefined rule
-					cdrelist := getPreWafRuleFromDefaultSensor(cdrename)
-					for _, cdre := range cdrelist {
-						rdre := &api.RESTWafRule{
-							Name:    common.GetOrigWafRuleName(cdre.Name),
-							ID:      cdre.ID,
-							CfgType: cfgTypeMapping[cdre.CfgType],
-						}
-						for _, cpt := range cdre.Patterns {
-							if cpt.Context == "" {
-								cpt.Context = share.DlpPatternContextDefault
-							}
-							rdre.Patterns = append(rdre.Patterns, api.RESTWafCriteriaEntry{
-								Key:     cpt.Key,
-								Value:   cpt.Value,
-								Op:      cpt.Op,
-								Context: cpt.Context,
-							})
-						}
-						resp.RuleList = append(resp.RuleList, rdre)
-					}
 				}
 			}
 		}
 		sort.Slice(resp.RuleList, func(i, j int) bool {
 			return resp.RuleList[i].Name < resp.RuleList[j].Name
 		})
-		ret = append(ret, &resp)
+		if getLocal && cdr.CfgType != share.FederalCfg {
+			localSensors = append(localSensors, &resp)
+		}
+		if getFed && cdr.CfgType == share.FederalCfg {
+			fedSensors = append(fedSensors, &resp)
+		}
 	}
+	ret = append(ret, fedSensors...)
+	ret = append(ret, localSensors...)
 	return ret
 }
 
@@ -1061,7 +1027,7 @@ func GetWafGrpSensorAction(cg, sn string) string {
 
 func GetWafOutsideGrpSensorAction(cg, sn string, out2ingrp map[string]map[string]string) string {
 	if tgrps, ok := out2ingrp[cg]; ok {
-		for tg, _ := range tgrps {
+		for tg := range tgrps {
 			otact := GetWafGrpSensorAction(tg, sn)
 			if otact == share.DlpRuleActionDrop {
 				return share.DlpRuleActionDrop
@@ -1083,7 +1049,7 @@ func (m *CacheMethod) GetWafGroup(group string, acc *access.AccessControl) (*api
 				Status:  cg.Status,
 				Sensors: make([]*api.RESTWafSetting, 0),
 			}
-			resp.CfgType, _ = cfgTypeMapping[cg.CfgType]
+			resp.CfgType = cfgTypeMapping[cg.CfgType]
 
 			for _, cs := range cg.Sensors {
 				rdsa := &api.RESTWafSetting{
@@ -1107,14 +1073,33 @@ func (m *CacheMethod) GetWafGroup(group string, acc *access.AccessControl) (*api
 	return nil, common.ErrObjectNotFound
 }
 
-func (m *CacheMethod) GetAllWafGroup(acc *access.AccessControl) []*api.RESTWafGroup {
+func (m *CacheMethod) GetAllWafGroup(scope string, acc *access.AccessControl) []*api.RESTWafGroup {
 	log.Debug("")
+	var getLocal, getFed bool
+	if scope == share.ScopeLocal {
+		getLocal = true
+	} else if scope == share.ScopeFed {
+		getFed = true
+	} else if scope == share.ScopeAll {
+		getLocal = true
+		getFed = true
+	} else {
+		return nil
+	}
 	cacheMutexRLock()
 	defer cacheMutexRUnlock()
 
+	localWafGroups := make([]*api.RESTWafGroup, 0)
+	fedWafGroups := make([]*api.RESTWafGroup, 0)
 	ret := make([]*api.RESTWafGroup, 0)
 	for _, cg := range wafGroups {
 		if !acc.Authorize(cg, getAccessObjectFuncNoLock) {
+			continue
+		}
+		if getLocal && !getFed && cg.CfgType == share.FederalCfg {
+			continue
+		}
+		if getFed && !getLocal && cg.CfgType != share.FederalCfg {
 			continue
 		}
 		resp := api.RESTWafGroup{
@@ -1122,7 +1107,7 @@ func (m *CacheMethod) GetAllWafGroup(acc *access.AccessControl) []*api.RESTWafGr
 			Status:  cg.Status,
 			Sensors: make([]*api.RESTWafSetting, 0),
 		}
-		resp.CfgType, _ = cfgTypeMapping[cg.CfgType]
+		resp.CfgType = cfgTypeMapping[cg.CfgType]
 
 		for _, cs := range cg.Sensors {
 			rdsa := &api.RESTWafSetting{
@@ -1138,8 +1123,15 @@ func (m *CacheMethod) GetAllWafGroup(acc *access.AccessControl) []*api.RESTWafGr
 			}
 			resp.Sensors = append(resp.Sensors, rdsa)
 		}
-		ret = append(ret, &resp)
+		if getLocal && cg.CfgType != share.FederalCfg {
+			localWafGroups = append(localWafGroups, &resp)
+		}
+		if getFed && cg.CfgType == share.FederalCfg {
+			fedWafGroups = append(fedWafGroups, &resp)
+		}
 	}
+	ret = append(ret, fedWafGroups...)
+	ret = append(ret, localWafGroups...)
 	return ret
 }
 
@@ -1183,7 +1175,7 @@ func (m CacheMethod) GetWafRuleSensorGroupById(id uint32) (string, string, *[]st
 				sname = sens.ToStringSlice()[0]
 				if cds, ok2 := wafSensors[sname]; ok2 {
 					if cds != nil {
-						for grp, _ := range cds.Groups {
+						for grp := range cds.Groups {
 							grpname = append(grpname, grp)
 						}
 					}
@@ -1201,11 +1193,11 @@ func (m CacheMethod) GetWafRuleNames() *[]string {
 
 	if cdr, ok := wafSensors[share.CLUSWafDefaultSensor]; ok {
 		//user created rule
-		for rn, _ := range cdr.RuleList {
+		for rn := range cdr.RuleList {
 			wafrulenames = append(wafrulenames, getCombinedWafSensorRuleName(rn))
 		}
 		//predefined rule
-		for prn, _ := range cdr.PreRuleList {
+		for prn := range cdr.PreRuleList {
 			wafrulenames = append(wafrulenames, getCombinedWafSensorRuleName(prn))
 		}
 		sort.Slice(wafrulenames, func(i, j int) bool {
@@ -1214,4 +1206,46 @@ func (m CacheMethod) GetWafRuleNames() *[]string {
 		return &wafrulenames
 	}
 	return nil
+}
+
+// caller owns cacheMutexRLock & has readAll right
+func (m CacheMethod) GetFedWafGroupSensorCache() ([]*share.CLUSWafSensor, []*share.CLUSWafGroup) {
+	fedwafsensors := make([]*share.CLUSWafSensor, 0)
+	for _, cdr := range wafSensors {
+		if cdr.CfgType == share.FederalCfg && strings.HasPrefix(cdr.Name, api.FederalGroupPrefix) {
+			fedwafsensors = append(fedwafsensors, cdr)
+		}
+		//we sync (predefined)rules with 'fed.' prefix
+		if cdr.Name == share.CLUSWafDefaultSensor {
+			fedDefSyncWafSensor := &share.CLUSWafSensor{
+				Name:          share.CLUSFedWafDefSyncSensor,
+				Groups:        make(map[string]string),
+				RuleListNames: make(map[string]string),
+				RuleList:      make(map[string]*share.CLUSWafRule),
+				PreRuleList:   make(map[string][]*share.CLUSWafRule),
+				Predefine:     false,
+				CfgType:       share.FederalCfg,
+			}
+			//user created rule
+			for rn, cdre := range cdr.RuleList {
+				if strings.HasPrefix(rn, api.FederalGroupPrefix) {
+					fedDefSyncWafSensor.RuleList[rn] = cdre
+				}
+			}
+			//predefined rule
+			for rn, cdrelist := range cdr.PreRuleList {
+				if strings.HasPrefix(rn, api.FederalGroupPrefix) {
+					fedDefSyncWafSensor.PreRuleList[rn] = cdrelist
+				}
+			}
+			fedwafsensors = append(fedwafsensors, fedDefSyncWafSensor)
+		}
+	}
+	fedwafgrps := make([]*share.CLUSWafGroup, 0)
+	for _, cg := range wafGroups {
+		if cg.CfgType == share.FederalCfg && strings.HasPrefix(cg.Name, api.FederalGroupPrefix) {
+			fedwafgrps = append(fedwafgrps, cg)
+		}
+	}
+	return fedwafsensors, fedwafgrps
 }

@@ -106,10 +106,10 @@ func domainConfigUpdate(nType cluster.ClusterNotifyType, key string, value []byt
 	switch nType {
 	case cluster.ClusterNotifyAdd, cluster.ClusterNotifyModify:
 		var domain share.CLUSDomain
-		json.Unmarshal(value, &domain)
+		_ = json.Unmarshal(value, &domain)
 
 		domainMutex.Lock()
-		oDomain, _ := domainCacheMap[name]
+		oDomain := domainCacheMap[name]
 		domainCacheMap[name] = &domainCache{domain: &domain}
 		if cacher.rmNsGrps {
 			if _, ok := domainRemoveMap[name]; ok {

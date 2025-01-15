@@ -30,10 +30,10 @@ import (
 	"github.com/neuvector/neuvector/share/utils"
 )
 
-const (
-	_writeHeader   = true
-	_noWriteHeader = false
-)
+// const (
+// 	_writeHeader   = true
+// 	_noWriteHeader = false
+// )
 
 type admissionRequestObject struct {
 	ApiVersion string            `json:"apiVersion,omitempty"`
@@ -155,7 +155,7 @@ func validateAdmCtrlCriteria(criteria []*share.CLUSAdmRuleCriterion, options map
 			}
 			if crt.Name == share.CriteriaKeyCVEScoreCount && len(crt.SubCriteria) == 0 {
 				crt.SubCriteria = []*share.CLUSAdmRuleCriterion{
-					&share.CLUSAdmRuleCriterion{
+					{
 						Name:  share.SubCriteriaCount,
 						Op:    share.CriteriaOpBiggerEqualThan,
 						Value: "1",
@@ -297,7 +297,7 @@ func applyTransact(w http.ResponseWriter, txn *cluster.ClusterTransact) error {
 		if w != nil {
 			restRespErrorMessage(w, http.StatusInternalServerError, api.RESTErrFailWriteCluster, e)
 		}
-		return fmt.Errorf(e)
+		return fmt.Errorf("%s", e)
 	}
 	return nil
 }
@@ -393,7 +393,6 @@ func handlerGetAdmissionState(w http.ResponseWriter, r *http.Request, ps httprou
 			return
 		}
 		state.AdmSvcType = &svcInfo.SvcType
-		state.FailurePolicy = state.FailurePolicy
 		/* do not allow admission control webhook's FailurePolicy to be configurable yet
 		if admission.IsNsSelectorSupported() {
 			state.FailurePolicyChangable = true
@@ -475,25 +474,9 @@ func handlerPatchAdmissionState(w http.ResponseWriter, r *http.Request, ps httpr
 		log.Error("Request contains invalid data")
 		restRespError(w, http.StatusBadRequest, api.RESTErrInvalidRequest)
 		return
-	} else if state.FailurePolicy != nil {
-		/* do not allow admission control webhook's FailurePolicy to be configurable yet
-		invalidFailurePolicy := false
-		if admission.IsNsSelectorSupported() {
-			if *state.FailurePolicy != resource.IgnoreLower && *state.FailurePolicy != resource.FailLower {
-				invalidFailurePolicy = true
-			}
-		} else if state.FailurePolicy != nil && *state.FailurePolicy != *currState.FailurePolicy {
-			invalidFailurePolicy = true
-		}
-		if invalidFailurePolicy {
-			e := fmt.Errorf("Request contains invalid FailurePolicy: %s", *state.FailurePolicy)
-			log.Error(e)
-			restRespErrorMessage(w, http.StatusBadRequest, api.RESTErrInvalidRequest, e.Error())
-		}
-		*/
 	}
 	if state.Mode != nil && *state.Mode == share.AdmCtrlModeProtect {
-		if licenseAllowEnforce() == false {
+		if !licenseAllowEnforce() {
 			e := "The policy mode is not enabled in the license"
 			log.WithFields(log.Fields{"mode": *state.Mode}).Error(e)
 			restRespErrorMessage(w, http.StatusBadRequest, api.RESTErrLicenseFail, e)
@@ -546,7 +529,7 @@ func handlerPatchAdmissionState(w http.ResponseWriter, r *http.Request, ps httpr
 		k8sResInfo := admission.ValidatingWebhookConfigInfo{
 			Name: resource.NvAdmValidatingName,
 			WebhooksInfo: []*admission.WebhookInfo{
-				&admission.WebhookInfo{
+				{
 					Name: resource.NvAdmValidatingWebhookName,
 					ClientConfig: admission.ClientConfig{
 						ClientMode:  admClientMode,
@@ -556,7 +539,7 @@ func handlerPatchAdmissionState(w http.ResponseWriter, r *http.Request, ps httpr
 					FailurePolicy:  failurePolicy,
 					TimeoutSeconds: resource.DefTimeoutSeconds,
 				},
-				&admission.WebhookInfo{
+				{
 					Name: resource.NvStatusValidatingWebhookName,
 					ClientConfig: admission.ClientConfig{
 						ClientMode:  admClientMode,
@@ -578,7 +561,9 @@ func handlerPatchAdmissionState(w http.ResponseWriter, r *http.Request, ps httpr
 				alog.Event = share.CLUSEvAdmCtrlK8sConfigFailed
 				alog.Msg = "Failed to configure admission control state."
 			}
-			evqueue.Append(&alog)
+			if err := evqueue.Append(&alog); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("evqueue.Append")
+			}
 		}
 		if err == nil {
 			messages := make([]string, 0, 3)
@@ -718,27 +703,44 @@ func replaceFedAdmissionRules(ruleType string, rulesNew *share.CLUSAdmissionRule
 	if modKeysCount < _maxTransacKeys { // less then 64 keys modified. use transaction
 		txn := cluster.Transact()
 		defer txn.Close()
+		var hasTxnError bool
 		// delete obsolete id keys
 		for _, id := range delRules {
 			clusHelper.DeleteAdmissionRuleTxn(txn, admission.NvAdmValidateType, ruleType, id)
 		}
 		// write updated id keys
 		for _, ruleNew := range patchedRules {
-			clusHelper.PutAdmissionRuleTxn(txn, admission.NvAdmValidateType, ruleType, ruleNew)
+			if err := clusHelper.PutAdmissionRuleTxn(txn, admission.NvAdmValidateType, ruleType, ruleNew); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("PutAdmissionRuleTxn")
+				hasTxnError = true
+				break
+			}
 		}
 		// overwrite rule headers list
 		if rhlChanged {
-			clusHelper.PutAdmissionRuleListTxn(txn, admission.NvAdmValidateType, ruleType, rulesNew.RuleHeads)
+			if err := clusHelper.PutAdmissionRuleListTxn(txn, admission.NvAdmValidateType, ruleType, rulesNew.RuleHeads); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("PutAdmissionRuleListTxn")
+				hasTxnError = true
+			}
 		}
+
+		if hasTxnError {
+			return false
+		}
+
 		return applyTransact(nil, txn) == nil
 	} else {
 		// delete obsolete id keys
 		for _, id := range delRules {
-			clusHelper.DeleteAdmissionRule(admission.NvAdmValidateType, ruleType, id)
+			if err := clusHelper.DeleteAdmissionRule(admission.NvAdmValidateType, ruleType, id); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("DeleteAdmissionRule")
+			}
 		}
 		// write updated  id keys
 		for _, ruleNew := range patchedRules {
-			clusHelper.PutAdmissionRule(admission.NvAdmValidateType, ruleType, ruleNew)
+			if err := clusHelper.PutAdmissionRule(admission.NvAdmValidateType, ruleType, ruleNew); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("PutAdmissionRule")
+			}
 		}
 		// overwrite rule headers list
 		if rhlChanged {
@@ -769,6 +771,9 @@ func handlerGetAdmissionRules(w http.ResponseWriter, r *http.Request, ps httprou
 	allRules := make(map[string][]*api.RESTAdmissionRule, 7)
 	for _, ruleType := range ruleTypes {
 		rules := cacher.GetAdmissionRules(admission.NvAdmValidateType, ruleType, acc)
+		for _, rule := range rules {
+			rule.Criteria = cache.MergeAdmRuleCriteriaREST(rule.Criteria)
+		}
 		switch ruleType {
 		case share.FedAdmCtrlExceptRulesType, share.FedAdmCtrlDenyRulesType:
 			allRules[ruleType] = rules
@@ -837,7 +842,7 @@ func handlerGetAdmissionRules(w http.ResponseWriter, r *http.Request, ps httprou
 }
 
 // caller must own CLUSLockAdmCtrlKey lock
-func deleteAdmissionRules(w http.ResponseWriter, scope string, ruleTypeKeys []string, acc *access.AccessControl) (error, []string) {
+func deleteAdmissionRules(w http.ResponseWriter, scope string, ruleTypeKeys []string, acc *access.AccessControl) ([]string, error) {
 	type delRulesMetadata struct {
 		delRules     utils.Set             // id of rules to delete
 		keepRuleList []*share.CLUSRuleHead // new rule head list after deletion
@@ -881,10 +886,13 @@ func deleteAdmissionRules(w http.ResponseWriter, scope string, ruleTypeKeys []st
 	delFedRuleTypes := make([]string, 0, 2)
 	if modKeysCount < _maxTransacKeys {
 		txn := cluster.Transact()
-		txn.Close()
+		defer txn.Close()
 
 		for ruleTypeKey, delRuleType := range delRuleTypes {
-			clusHelper.PutAdmissionRuleListTxn(txn, admission.NvAdmValidateType, ruleTypeKey, delRuleType.keepRuleList)
+			if err := clusHelper.PutAdmissionRuleListTxn(txn, admission.NvAdmValidateType, ruleTypeKey, delRuleType.keepRuleList); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("PutAdmissionRuleListTxn")
+				return nil, err
+			}
 			for id := range delRuleType.delRules.Iter() {
 				clusHelper.DeleteAdmissionRuleTxn(txn, admission.NvAdmValidateType, ruleTypeKey, id.(uint32))
 				opa.DeletePolicy(id.(uint32))
@@ -894,7 +902,7 @@ func deleteAdmissionRules(w http.ResponseWriter, scope string, ruleTypeKeys []st
 			}
 		}
 		if err := applyTransact(w, txn); err != nil {
-			return err, nil
+			return nil, err
 		}
 	} else {
 		for ruleTypeKey, delRuleType := range delRuleTypes {
@@ -902,7 +910,9 @@ func deleteAdmissionRules(w http.ResponseWriter, scope string, ruleTypeKeys []st
 				break
 			} else {
 				for id := range delRuleType.delRules.Iter() {
-					clusHelper.DeleteAdmissionRule(admission.NvAdmValidateType, ruleTypeKey, id.(uint32))
+					if err := clusHelper.DeleteAdmissionRule(admission.NvAdmValidateType, ruleTypeKey, id.(uint32)); err != nil {
+						log.WithFields(log.Fields{"error": err}).Error("DeleteAdmissionRule")
+					}
 					opa.DeletePolicy(id.(uint32))
 				}
 				if ruleTypeKey == share.FedAdmCtrlExceptRulesType || ruleTypeKey == share.FedAdmCtrlDenyRulesType {
@@ -912,7 +922,7 @@ func deleteAdmissionRules(w http.ResponseWriter, scope string, ruleTypeKeys []st
 		}
 	}
 
-	return nil, delFedRuleTypes
+	return delFedRuleTypes, nil
 }
 
 func handlerDeleteAdmissionRules(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
@@ -940,7 +950,7 @@ func handlerDeleteAdmissionRules(w http.ResponseWriter, r *http.Request, ps http
 	}
 	defer clusHelper.ReleaseLock(lock)
 
-	err, delFedRuleTypes := deleteAdmissionRules(w, scope, ruleTypeKeys, acc)
+	delFedRuleTypes, err := deleteAdmissionRules(w, scope, ruleTypeKeys, acc)
 	if len(delFedRuleTypes) > 0 {
 		updateFedRulesRevision(delFedRuleTypes, acc, login)
 	}
@@ -968,6 +978,9 @@ func handlerGetAdmissionRule(w http.ResponseWriter, r *http.Request, ps httprout
 		restRespNotFoundLogAccessDenied(w, login, err)
 		return
 	}
+
+	rule.Criteria = cache.MergeAdmRuleCriteriaREST(rule.Criteria)
+
 	resp := api.RESTAdmissionRuleData{Rule: rule}
 
 	restRespSuccess(w, r, &resp, acc, login, nil, "Get admission control rule")
@@ -991,7 +1004,7 @@ func handlerAddAdmissionRule(w http.ResponseWriter, r *http.Request, ps httprout
 		return
 	}
 	ruleCfg := confData.Config
-	cfgType, _ := cfgTypeMapping[ruleCfg.CfgType]
+	cfgType := cfgTypeMapping[ruleCfg.CfgType]
 	modes := utils.NewSet("", share.AdmCtrlModeMonitor, share.AdmCtrlModeProtect)
 	if (cfgType != share.UserCreated && cfgType != share.FederalCfg) ||
 		(ruleCfg.RuleType != api.ValidatingExceptRuleType && ruleCfg.RuleType != api.ValidatingDenyRuleType) ||
@@ -1091,16 +1104,26 @@ func handlerAddAdmissionRule(w http.ResponseWriter, r *http.Request, ps httprout
 	txn := cluster.Transact()
 	defer txn.Close()
 
-	clusHelper.PutAdmissionRuleTxn(txn, admission.NvAdmValidateType, ruleTypeKey, clusConf)
+	if err := clusHelper.PutAdmissionRuleTxn(txn, admission.NvAdmValidateType, ruleTypeKey, clusConf); err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("PutAdmissionRuleTxn")
+		restRespErrorMessage(w, http.StatusInternalServerError, api.RESTErrFailWriteCluster, err.Error())
+		return
+	}
 	arhs, _ := clusHelper.GetAdmissionRuleList(admission.NvAdmValidateType, ruleTypeKey)
 	rh := &share.CLUSRuleHead{
 		ID:      ruleCfg.ID,
 		CfgType: cfgType,
 	}
 	arhs = append(arhs, rh)
-	clusHelper.PutAdmissionRuleListTxn(txn, admission.NvAdmValidateType, ruleTypeKey, arhs)
+	if err := clusHelper.PutAdmissionRuleListTxn(txn, admission.NvAdmValidateType, ruleTypeKey, arhs); err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("PutAdmissionRuleListTxn")
+		restRespErrorMessage(w, http.StatusInternalServerError, api.RESTErrFailWriteCluster, err.Error())
+		return
+	}
 
-	if applyTransact(w, txn) != nil {
+	if err := applyTransact(w, txn); err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("applyTransact")
+		restRespErrorMessage(w, http.StatusInternalServerError, api.RESTErrFailWriteCluster, err.Error())
 		return
 	}
 
@@ -1123,9 +1146,7 @@ func handlerAddAdmissionRule(w http.ResponseWriter, r *http.Request, ps httprout
 	}
 	if ruleCfg.Criteria != nil {
 		resp.Rule.Criteria = make([]*api.RESTAdmRuleCriterion, len(ruleCfg.Criteria))
-		for idx, c := range ruleCfg.Criteria {
-			resp.Rule.Criteria[idx] = c
-		}
+		copy(resp.Rule.Criteria, ruleCfg.Criteria)
 	}
 
 	opa.ConvertToRegoRule(clusConf)
@@ -1300,7 +1321,11 @@ func handlerDeleteAdmissionRule(w http.ResponseWriter, r *http.Request, ps httpr
 	}
 	if idx == -1 {
 		// force writing the same header list value to kv so that cacher can do self-check
-		clusHelper.PutAdmissionRuleList(admission.NvAdmValidateType, ruleTypeKey, arhs)
+		if err := clusHelper.PutAdmissionRuleList(admission.NvAdmValidateType, ruleTypeKey, arhs); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("PutAdmissionRuleList")
+			restRespErrorMessage(w, http.StatusInternalServerError, api.RESTErrFailWriteCluster, err.Error())
+			return
+		}
 		log.WithFields(log.Fields{"id": id, "ruleTypeKey": ruleTypeKey}).Error("Admission rule doesn't exist")
 		restRespError(w, http.StatusNotFound, api.RESTErrObjectNotFound)
 		return
@@ -1314,11 +1339,18 @@ func handlerDeleteAdmissionRule(w http.ResponseWriter, r *http.Request, ps httpr
 	txn := cluster.Transact()
 	defer txn.Close()
 
-	clusHelper.PutAdmissionRuleListTxn(txn, admission.NvAdmValidateType, ruleTypeKey, arhs)
+	if err := clusHelper.PutAdmissionRuleListTxn(txn, admission.NvAdmValidateType, ruleTypeKey, arhs); err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("PutAdmissionRuleListTxn")
+		restRespErrorMessage(w, http.StatusInternalServerError, api.RESTErrFailWriteCluster, err.Error())
+		return
+	}
+
 	clusHelper.DeleteAdmissionRuleTxn(txn, admission.NvAdmValidateType, ruleTypeKey, id)
 	opa.DeletePolicy(id)
 
-	if applyTransact(w, txn) != nil {
+	if err := applyTransact(w, txn); err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("applyTransact")
+		restRespErrorMessage(w, http.StatusInternalServerError, api.RESTErrFailWriteCluster, err.Error())
 		return
 	}
 
@@ -1450,6 +1482,9 @@ func handlerAdmCtrlExport(w http.ResponseWriter, r *http.Request, ps httprouter.
 				restRespNotFoundLogAccessDenied(w, login, err)
 				return
 			}
+
+			rule.Criteria = cache.MergeAdmRuleCriteriaREST(rule.Criteria)
+
 			action := &actionDeny
 			if rule.RuleType == api.ValidatingExceptRuleType || rule.RuleType == share.FedAdmCtrlExceptRulesType {
 				action = &actionAllow
@@ -1507,7 +1542,7 @@ func importAdmCtrl(scope string, loginDomainRoles access.DomainRole, importTask 
 	if err := json.Unmarshal(json_data, &secRule); err != nil || secRule.APIVersion != "neuvector.com/v1" || secRule.Kind != resource.NvAdmCtrlSecurityRuleKind {
 		msg := "Invalid security rule(s)"
 		log.WithFields(log.Fields{"error": err}).Error(msg)
-		postImportOp(fmt.Errorf(msg), importTask, loginDomainRoles, "", share.IMPORT_TYPE_ADMCTRL)
+		postImportOp(fmt.Errorf("%s", msg), importTask, loginDomainRoles, "", share.IMPORT_TYPE_ADMCTRL)
 		return nil
 	}
 
@@ -1519,7 +1554,7 @@ func importAdmCtrl(scope string, loginDomainRoles access.DomainRole, importTask 
 
 	importTask.Percentage = int(progress)
 	importTask.Status = share.IMPORT_RUNNING
-	clusHelper.PutImportTask(&importTask)
+	_ = clusHelper.PutImportTask(&importTask) // Ignore error because progress update is non-critical
 
 	var err error
 	var crdHandler nvCrdHandler
@@ -1530,11 +1565,11 @@ func importAdmCtrl(scope string, loginDomainRoles access.DomainRole, importTask 
 		// [1] parse security rule in the yaml file
 		parsedCfg, errCount, errMsg, _ := crdHandler.parseCurCrdAdmCtrlContent(&secRule, share.ReviewTypeImportAdmCtrl, share.ReviewTypeDisplayAdmission)
 		if errCount > 0 {
-			err = fmt.Errorf(errMsg)
+			err = fmt.Errorf("%s", errMsg)
 		} else {
 			progress += inc
 			importTask.Percentage = int(progress)
-			clusHelper.PutImportTask(&importTask)
+			_ = clusHelper.PutImportTask(&importTask) // Ignore error because progress update is non-critical
 
 			acc := access.NewAdminAccessControl()
 			// [2] import admission control configuration described in the yaml file
@@ -1542,7 +1577,7 @@ func importAdmCtrl(scope string, loginDomainRoles access.DomainRole, importTask 
 				var currState *api.RESTAdmissionState
 				if currState, err = cacher.GetAdmissionState(acc); err == nil {
 					if currState.CfgType == api.CfgTypeGround {
-						err = fmt.Errorf(restErrMessage[api.RESTErrOpNotAllowed])
+						err = fmt.Errorf("%s", restErrMessage[api.RESTErrOpNotAllowed])
 					} else {
 						err = crdHandler.crdHandleAdmCtrlConfig(scope, parsedCfg.AdmCtrlCfg, nil, share.ReviewTypeImportAdmCtrl)
 					}
@@ -1552,28 +1587,28 @@ func importAdmCtrl(scope string, loginDomainRoles access.DomainRole, importTask 
 				}
 				progress += inc
 				importTask.Percentage = int(progress)
-				clusHelper.PutImportTask(&importTask)
+				_ = clusHelper.PutImportTask(&importTask) // Ignore error because progress update is non-critical
 			}
 			if err == nil && parsedCfg.AdmCtrlRulesCfg != nil {
 				// [3] delete all user-created non-default admission control rules
 				ruleTypeKeys := []string{api.ValidatingExceptRuleType, api.ValidatingDenyRuleType}
-				if err, _ = deleteAdmissionRules(nil, scope, ruleTypeKeys, acc); err != nil {
+				if _, err = deleteAdmissionRules(nil, scope, ruleTypeKeys, acc); err != nil {
 					importTask.Status = err.Error()
 				}
 				progress += inc
 				importTask.Percentage = int(progress)
-				clusHelper.PutImportTask(&importTask)
+				_ = clusHelper.PutImportTask(&importTask) // Ignore error because progress update is non-critical
 				if err == nil && len(parsedCfg.AdmCtrlRulesCfg) > 0 {
 					var cacheRecord share.CLUSCrdSecurityRule
 					// [4] import all admission control rules defined in the yaml file
 					crdHandler.crdHandleAdmCtrlRules(scope, parsedCfg.AdmCtrlRulesCfg, &cacheRecord, share.ReviewTypeImportAdmCtrl)
 					progress += inc
 					importTask.Percentage = int(progress)
-					clusHelper.PutImportTask(&importTask)
+					_ = clusHelper.PutImportTask(&importTask) // Ignore error because progress update is non-critical
 				}
 			}
 			importTask.Percentage = 90
-			clusHelper.PutImportTask(&importTask)
+			_ = clusHelper.PutImportTask(&importTask) // Ignore error because progress update is non-critical
 		}
 	}
 
@@ -1672,7 +1707,11 @@ func handlerPromoteAdmissionRules(w http.ResponseWriter, r *http.Request, ps htt
 		} else {
 			rule.Comment = fmt.Sprintf("%s (%s)", rule.Comment, comment)
 		}
-		clusHelper.PutAdmissionRuleTxn(txn, admission.NvAdmValidateType, fedRuleTypeKey, rule)
+		if err := clusHelper.PutAdmissionRuleTxn(txn, admission.NvAdmValidateType, fedRuleTypeKey, rule); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("PutAdmissionRuleTxn")
+			errMsg = fmt.Sprintf("Unable to save data to the cluster - %s", err.Error())
+			break
+		}
 
 		if arhs, ok := fedArhs[fedRuleTypeKey]; ok {
 			rh := &share.CLUSRuleHead{
@@ -1691,10 +1730,18 @@ func handlerPromoteAdmissionRules(w http.ResponseWriter, r *http.Request, ps htt
 			for ruleTypes := range ruleTypesUpdated.Iter() {
 				fedRuleTypeKey := ruleTypes.(string)
 				if arhs, ok := fedArhs[fedRuleTypeKey]; ok {
-					clusHelper.PutAdmissionRuleListTxn(txn, admission.NvAdmValidateType, fedRuleTypeKey, arhs)
+					if err := clusHelper.PutAdmissionRuleListTxn(txn, admission.NvAdmValidateType, fedRuleTypeKey, arhs); err != nil {
+						log.WithFields(log.Fields{"error": err}).Error("PutAdmissionRuleListTxn")
+						restRespErrorMessage(w, http.StatusInternalServerError, api.RESTErrFailWriteCluster, err.Error())
+						return
+					}
 				}
 			}
-			if applyTransact(w, txn) == nil {
+
+			if err := applyTransact(w, txn); err != nil {
+				log.WithFields(log.Fields{"error": err}).Error("applyTransact")
+				restRespErrorMessage(w, http.StatusInternalServerError, api.RESTErrFailWriteCluster, err.Error())
+			} else {
 				updateFedRulesRevision(ruleTypesUpdated.ToStringSlice(), acc, login)
 				restRespSuccess(w, r, nil, acc, login, nil, "Promote admission control rule")
 			}
@@ -1702,8 +1749,6 @@ func handlerPromoteAdmissionRules(w http.ResponseWriter, r *http.Request, ps htt
 		}
 	}
 	restRespErrorMessage(w, http.StatusInternalServerError, api.RESTErrPromoteFail, errMsg)
-
-	return
 }
 
 func validateCustomPathCriteria(crt *share.CLUSAdmRuleCriterion) (bool, bool) {

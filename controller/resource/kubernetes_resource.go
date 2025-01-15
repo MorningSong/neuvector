@@ -260,25 +260,25 @@ var admRbacResForCreateUpdate1 = utils.NewSet(K8sResRoles, K8sResRolebindings)
 var admRbacResForCreateUpdate2 = utils.NewSet(K8sResClusterRoles, K8sResClusterRolebindings)
 var AdmResForOpsSettings = []*NvAdmRegRuleSetting{
 	// do not change the order of the following elements!
-	&NvAdmRegRuleSetting{
+	{
 		ApiGroups:  allApiGroups,
 		Operations: utils.NewSet(Create),
 		Resources:  admResForCreateSet,
 		Scope:      string(apiv1beta1.NamespacedScope),
 	},
-	&NvAdmRegRuleSetting{
+	{
 		ApiGroups:  allApiGroups,
 		Operations: utils.NewSet(Update),
 		Resources:  admResForUpdateSet,
 		Scope:      string(apiv1beta1.NamespacedScope),
 	},
-	&NvAdmRegRuleSetting{
+	{
 		ApiGroups:  rbacApiGroups,
 		Operations: opCreateDelete,
 		Resources:  admRbacResForCreateUpdate1,
 		Scope:      string(apiv1beta1.NamespacedScope),
 	},
-	&NvAdmRegRuleSetting{
+	{
 		ApiGroups:  rbacApiGroups,
 		Operations: opCreateDelete,
 		Resources:  admRbacResForCreateUpdate2,
@@ -289,7 +289,7 @@ var AdmResForOpsSettings = []*NvAdmRegRuleSetting{
 var crdResForAllOpSet = utils.NewSet(RscTypeCrdSecurityRule, RscTypeCrdClusterSecurityRule, RscTypeCrdAdmCtrlSecurityRule, RscTypeCrdDlpSecurityRule,
 	RscTypeCrdWafSecurityRule, RscTypeCrdVulnProfile, RscTypeCrdCompProfile)
 var CrdResForOpsSettings = []*NvAdmRegRuleSetting{
-	&NvAdmRegRuleSetting{
+	{
 		ApiGroups:  allApiGroups,
 		Operations: utils.NewSet(Create, Update, Delete),
 		Resources:  crdResForAllOpSet,
@@ -300,13 +300,13 @@ var CrdResForOpsSettings = []*NvAdmRegRuleSetting{
 var statusResForCreateUpdateSet = utils.NewSet(K8sResServices)
 var statusResForDeleteSet = utils.NewSet(K8sResDaemonsets, K8sResDeployments, K8sResServices, K8sResStatefulSets)
 var StatusResForOpsSettings = []*NvAdmRegRuleSetting{
-	&NvAdmRegRuleSetting{
+	{
 		ApiGroups:  allApiGroups,
 		Operations: opCreateDelete,
 		Resources:  statusResForCreateUpdateSet,
 		Scope:      string(apiv1beta1.NamespacedScope),
 	},
-	&NvAdmRegRuleSetting{
+	{
 		ApiGroups:  allApiGroups,
 		Operations: utils.NewSet(Delete),
 		Resources:  statusResForDeleteSet,
@@ -321,8 +321,7 @@ var ocVersionMajor int
 var cacheEventFunc common.CacheEventFunc
 
 var nvQueryK8sVerFunc NvQueryK8sVerFunc
-var nvVerifyK8sNsFunc NvVerifyK8sNsFunc
-var isLeader bool
+
 var cspType share.TCspType
 
 var watchFailedFlag int32
@@ -335,10 +334,10 @@ const (
 )
 
 var resourceMakers map[string]k8sResource = map[string]k8sResource{
-	RscTypeNode: k8sResource{
+	RscTypeNode: {
 		apiGroup: "",
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(corev1.Node) },
 				func() metav1.ListInterface { return new(corev1.NodeList) },
@@ -347,10 +346,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeNamespace: k8sResource{
+	RscTypeNamespace: {
 		apiGroup: "",
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(corev1.Namespace) },
 				func() metav1.ListInterface { return new(corev1.NamespaceList) },
@@ -359,10 +358,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeService: k8sResource{
+	RscTypeService: {
 		apiGroup: "",
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(corev1.Service) },
 				func() metav1.ListInterface { return new(corev1.ServiceList) },
@@ -371,10 +370,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypePod: k8sResource{
+	RscTypePod: {
 		apiGroup: "",
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(corev1.Pod) },
 				func() metav1.ListInterface { return new(corev1.PodList) },
@@ -383,10 +382,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeDeployment: k8sResource{
+	RscTypeDeployment: {
 		apiGroup: "apps",
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(appsv1.Deployment) },
 				func() metav1.ListInterface { return new(appsv1.DeploymentList) },
@@ -395,10 +394,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeDaemonSet: k8sResource{
+	RscTypeDaemonSet: {
 		apiGroup: "apps",
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(appsv1.DaemonSet) },
 				func() metav1.ListInterface { return new(appsv1.DaemonSetList) },
@@ -407,10 +406,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeReplicaSet: k8sResource{
+	RscTypeReplicaSet: {
 		apiGroup: "apps",
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(appsv1.ReplicaSet) },
 				func() metav1.ListInterface { return new(appsv1.ReplicaSetList) },
@@ -419,10 +418,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeStatefulSet: k8sResource{
+	RscTypeStatefulSet: {
 		apiGroup: "apps",
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(appsv1.StatefulSet) },
 				func() metav1.ListInterface { return new(appsv1.StatefulSetList) },
@@ -431,17 +430,17 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeCronJob: k8sResource{
+	RscTypeCronJob: {
 		apiGroup: "batch",
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1beta1",
 				func() metav1.Object { return new(batchv1b1.CronJob) },
 				func() metav1.ListInterface { return new(batchv1b1.CronJobList) },
 				xlateCronJob,
 				nil,
 			},
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(batchv1.CronJob) },
 				func() metav1.ListInterface { return new(batchv1.CronJobList) },
@@ -450,10 +449,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeImage: k8sResource{
+	RscTypeImage: {
 		apiGroup: "image.openshift.io",
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(ocImageStream) },
 				func() metav1.ListInterface { return new(ocImageStreamList) },
@@ -462,17 +461,17 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	k8sRscTypeRole: k8sResource{
+	k8sRscTypeRole: {
 		apiGroup: k8sRbacApiGroup,
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(rbacv1.Role) },
 				func() metav1.ListInterface { return new(rbacv1.RoleList) },
 				xlateRole,
 				nil,
 			},
-			&resourceMaker{
+			{
 				"v1beta1",
 				func() metav1.Object { return new(rbacv1b1.Role) },
 				func() metav1.ListInterface { return new(rbacv1b1.RoleList) },
@@ -481,17 +480,17 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	K8sRscTypeClusRole: k8sResource{
+	K8sRscTypeClusRole: {
 		apiGroup: k8sRbacApiGroup,
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(rbacv1.ClusterRole) },
 				func() metav1.ListInterface { return new(rbacv1.ClusterRoleList) },
 				xlateClusRole,
 				nil,
 			},
-			&resourceMaker{
+			{
 				"v1beta1",
 				func() metav1.Object { return new(rbacv1b1.ClusterRole) },
 				func() metav1.ListInterface { return new(rbacv1b1.ClusterRoleList) },
@@ -500,17 +499,17 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	k8sRscTypeRoleBinding: k8sResource{
+	k8sRscTypeRoleBinding: {
 		apiGroup: k8sRbacApiGroup,
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(rbacv1.RoleBinding) },
 				func() metav1.ListInterface { return new(rbacv1.RoleBindingList) },
 				xlateRoleBinding,
 				nil,
 			},
-			&resourceMaker{
+			{
 				"v1beta1",
 				func() metav1.Object { return new(rbacv1b1.RoleBinding) },
 				func() metav1.ListInterface { return new(rbacv1b1.RoleBindingList) },
@@ -519,17 +518,17 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	K8sRscTypeClusRoleBinding: k8sResource{
+	K8sRscTypeClusRoleBinding: {
 		apiGroup: k8sRbacApiGroup,
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(rbacv1.ClusterRoleBinding) },
 				func() metav1.ListInterface { return new(rbacv1.ClusterRoleBindingList) },
 				xlateClusRoleBinding,
 				nil,
 			},
-			&resourceMaker{
+			{
 				"v1beta1",
 				func() metav1.Object { return new(rbacv1b1.ClusterRoleBinding) },
 				func() metav1.ListInterface { return new(rbacv1b1.ClusterRoleBindingList) },
@@ -538,17 +537,17 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeCrd: k8sResource{
+	RscTypeCrd: {
 		apiGroup: k8sCrdApiGroup,
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1beta1",
 				func() metav1.Object { return new(apiextv1b1.CustomResourceDefinition) },
 				func() metav1.ListInterface { return new(apiextv1b1.CustomResourceDefinitionList) },
 				xlateCrd,
 				nil,
 			},
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(apiextv1.CustomResourceDefinition) },
 				func() metav1.ListInterface { return new(apiextv1.CustomResourceDefinitionList) },
@@ -557,10 +556,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeCrdSecurityRule: k8sResource{
+	RscTypeCrdSecurityRule: {
 		apiGroup: constApiGroupNV,
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(NvSecurityRule) },
 				func() metav1.ListInterface { return new(NvSecurityRuleList) },
@@ -570,10 +569,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 		},
 	},
 
-	RscTypeCrdClusterSecurityRule: k8sResource{
+	RscTypeCrdClusterSecurityRule: {
 		apiGroup: constApiGroupNV,
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(NvClusterSecurityRule) },
 				func() metav1.ListInterface { return new(NvClusterSecurityRuleList) },
@@ -582,10 +581,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeCrdAdmCtrlSecurityRule: k8sResource{
+	RscTypeCrdAdmCtrlSecurityRule: {
 		apiGroup: constApiGroupNV,
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(NvAdmCtrlSecurityRule) },
 				func() metav1.ListInterface { return new(NvAdmCtrlSecurityRuleList) },
@@ -594,10 +593,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeCrdDlpSecurityRule: k8sResource{
+	RscTypeCrdDlpSecurityRule: {
 		apiGroup: constApiGroupNV,
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(NvDlpSecurityRule) },
 				func() metav1.ListInterface { return new(NvDlpSecurityRuleList) },
@@ -606,10 +605,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeCrdWafSecurityRule: k8sResource{
+	RscTypeCrdWafSecurityRule: {
 		apiGroup: constApiGroupNV,
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(NvWafSecurityRule) },
 				func() metav1.ListInterface { return new(NvWafSecurityRuleList) },
@@ -618,10 +617,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeCrdVulnProfile: k8sResource{
+	RscTypeCrdVulnProfile: {
 		apiGroup: constApiGroupNV,
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(NvVulnProfileSecurityRule) },
 				func() metav1.ListInterface { return new(NvVulnProfileSecurityRuleList) },
@@ -630,10 +629,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeCrdCompProfile: k8sResource{
+	RscTypeCrdCompProfile: {
 		apiGroup: constApiGroupNV,
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(NvCompProfileSecurityRule) },
 				func() metav1.ListInterface { return new(NvCompProfileSecurityRuleList) },
@@ -642,10 +641,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeCrdNvCspUsage: k8sResource{
+	RscTypeCrdNvCspUsage: {
 		apiGroup: "susecloud.net",
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(NvCspUsage) },
 				func() metav1.ListInterface { return new(NvCspUsageList) },
@@ -654,10 +653,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeConfigMap: k8sResource{
+	RscTypeConfigMap: {
 		apiGroup: "",
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(corev1.ConfigMap) },
 				func() metav1.ListInterface { return new(corev1.ConfigMapList) },
@@ -666,10 +665,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypeSecret: k8sResource{
+	RscTypeSecret: {
 		apiGroup: "",
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(corev1.Secret) },
 				func() metav1.ListInterface { return new(corev1.SecretList) },
@@ -678,17 +677,17 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	/*RscTypeMutatingWebhookConfiguration: k8sResource{
+	/*RscTypeMutatingWebhookConfiguration: {
 			apiGroup: k8sAdmApiGroup,
 			makers: []*resourceMaker{
-				&resourceMaker{
+				{
 					"v1",
 					func() metav1.Object { return new(admregv1.MutatingWebhookConfiguration) },
 					func() metav1.ListInterface { return new(admregv1.MutatingWebhookConfigurationList) },
 					xlateMutatingWebhookConfiguration,
 					nil,
 				},
-	            &resourceMaker{
+	            {
 					"v1beta1",
 					func() metav1.Object { return new(admregv1b1.MutatingWebhookConfiguration) },
 					func() metav1.ListInterface { return new(admregv1b1.MutatingWebhookConfigurationList) },
@@ -697,17 +696,17 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 				},
 			},
 		},*/
-	RscTypeValidatingWebhookConfiguration: k8sResource{
+	RscTypeValidatingWebhookConfiguration: {
 		apiGroup: k8sAdmApiGroup,
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(admregv1.ValidatingWebhookConfiguration) },
 				func() metav1.ListInterface { return new(admregv1.ValidatingWebhookConfigurationList) },
 				xlateValidatingWebhookConfiguration,
 				nil,
 			},
-			&resourceMaker{
+			{
 				"v1beta1",
 				func() metav1.Object { return new(admregv1b1.ValidatingWebhookConfiguration) },
 				func() metav1.ListInterface { return new(admregv1b1.ValidatingWebhookConfigurationList) },
@@ -716,10 +715,10 @@ var resourceMakers map[string]k8sResource = map[string]k8sResource{
 			},
 		},
 	},
-	RscTypePersistentVolumeClaim: k8sResource{
+	RscTypePersistentVolumeClaim: {
 		apiGroup: "",
 		makers: []*resourceMaker{
-			&resourceMaker{
+			{
 				"v1",
 				func() metav1.Object { return new(corev1.PersistentVolumeClaim) },
 				func() metav1.ListInterface { return new(corev1.PersistentVolumeClaimList) },
@@ -1154,25 +1153,25 @@ func xlateConfigMap(obj metav1.Object) (string, interface{}) {
 	return "", nil
 }
 
-func xlateMutatingWebhookConfiguration(obj metav1.Object) (string, interface{}) {
-	var name string
-	var guid string
-	if o, ok := obj.(*admregv1.MutatingWebhookConfiguration); ok {
-		name = o.GetName()
-		guid = string(o.GetUID())
-	} else if o, ok := obj.(*admregv1b1.MutatingWebhookConfiguration); ok {
-		name = o.GetName()
-		guid = string(o.GetUID())
-	}
-	if name != "" {
-		r := &AdmissionWebhookConfiguration{
-			AdmType: nvAdmMutateType,
-			Name:    name,
-		}
-		return guid, r
-	}
-	return "", nil
-}
+// func xlateMutatingWebhookConfiguration(obj metav1.Object) (string, interface{}) {
+// 	var name string
+// 	var guid string
+// 	if o, ok := obj.(*admregv1.MutatingWebhookConfiguration); ok {
+// 		name = o.GetName()
+// 		guid = string(o.GetUID())
+// 	} else if o, ok := obj.(*admregv1b1.MutatingWebhookConfiguration); ok {
+// 		name = o.GetName()
+// 		guid = string(o.GetUID())
+// 	}
+// 	if name != "" {
+// 		r := &AdmissionWebhookConfiguration{
+// 			AdmType: nvAdmMutateType,
+// 			Name:    name,
+// 		}
+// 		return guid, r
+// 	}
+// 	return "", nil
+// }
 
 func xlateValidatingWebhookConfiguration(obj metav1.Object) (string, interface{}) {
 	var name string
@@ -1381,25 +1380,30 @@ func (d *kubernetes) StartWatchResource(rt, ns string, wcb orchAPI.WatchCallback
 	var err error
 	for range []bool{true} {
 		if rt == RscTypeRBAC {
-			if err = d.startWatchResource(k8sRscTypeRole, ns, d.cbResourceRole, scb); err != nil {
-				d.StopWatchResource(rt)
-				break
+			resources := []struct {
+				rscType string
+				cb      orchAPI.WatchCallback
+			}{
+				{k8sRscTypeRole, d.cbResourceRole},
+				{K8sRscTypeClusRole, d.cbResourceRole},
+				{k8sRscTypeRoleBinding, d.cbResourceRoleBinding},
+				{K8sRscTypeClusRoleBinding, d.cbResourceRoleBinding},
 			}
-			if err = d.startWatchResource(K8sRscTypeClusRole, ns, d.cbResourceRole, scb); err != nil {
-				d.StopWatchResource(rt)
-				break
+
+			for _, res := range resources {
+				if err = d.startWatchResource(res.rscType, ns, res.cb, scb); err != nil {
+					if stopErr := d.StopWatchResource(rt); stopErr != nil {
+						log.WithFields(log.Fields{"error": stopErr}).Error("stop watch")
+					}
+					break
+				}
 			}
-			if err = d.startWatchResource(k8sRscTypeRoleBinding, ns, d.cbResourceRoleBinding, scb); err != nil {
-				d.StopWatchResource(rt)
-				break
+
+			if err == nil {
+				d.lock.Lock()
+				d.watchers[rt] = &resourceWatcher{cb: wcb}
+				d.lock.Unlock()
 			}
-			if err = d.startWatchResource(K8sRscTypeClusRoleBinding, ns, d.cbResourceRoleBinding, scb); err != nil {
-				d.StopWatchResource(rt)
-				break
-			}
-			d.lock.Lock()
-			d.watchers[rt] = &resourceWatcher{cb: wcb}
-			d.lock.Unlock()
 		} else {
 			err = d.startWatchResource(rt, ns, wcb, scb)
 		}
@@ -1432,6 +1436,8 @@ func (d *kubernetes) startWatchResource(rt, ns string, wcb orchAPI.WatchCallback
 
 		for {
 			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
 			d.lock.Lock()
 			watcher, err := d.client.Watch(ctx, ns, maker.newObject())
 			d.lock.Unlock()
@@ -1491,10 +1497,18 @@ func (d *kubernetes) startWatchResource(rt, ns string, wcb orchAPI.WatchCallback
 
 func (d *kubernetes) StopWatchResource(rt string) error {
 	if rt == RscTypeRBAC {
-		d.stopWatchResource(k8sRscTypeRole)
-		d.stopWatchResource(K8sRscTypeClusRole)
-		d.stopWatchResource(k8sRscTypeRoleBinding)
-		d.stopWatchResource(K8sRscTypeClusRoleBinding)
+		if err := d.stopWatchResource(k8sRscTypeRole); err != nil {
+			return err
+		}
+		if err := d.stopWatchResource(K8sRscTypeClusRole); err != nil {
+			return err
+		}
+		if err := d.stopWatchResource(k8sRscTypeRoleBinding); err != nil {
+			return err
+		}
+		if err := d.stopWatchResource(K8sRscTypeClusRoleBinding); err != nil {
+			return err
+		}
 		return nil
 	} else {
 		return d.stopWatchResource(rt)
@@ -1522,7 +1536,7 @@ func (d *kubernetes) StopWatchAllResources() error {
 	d.lock.Lock()
 	defer d.lock.Unlock()
 
-	for rt, _ := range d.watchers {
+	for rt := range d.watchers {
 		if d.watchers[rt] != nil && d.watchers[rt].cancel != nil {
 			d.watchers[rt].cancel()
 			d.watchers[rt] = nil
@@ -1875,7 +1889,7 @@ func AdjustAdmResForOC() {
 		rbacRolesWanted[nvOperatorsRole] = &k8sRbacRoleInfo{
 			name: nvOperatorsRole,
 			rules: []*k8sRbacRoleRuleInfo{
-				&k8sRbacRoleRuleInfo{
+				{
 					apiGroup:  "config.openshift.io",
 					resources: utils.NewSet(clusterOperators),
 					verbs:     utils.NewSet("get", "list"),
@@ -1888,9 +1902,8 @@ func AdjustAdmResForOC() {
 	}
 }
 
-func AdjustAdmWebhookName(f1 NvQueryK8sVerFunc, f2 NvVerifyK8sNsFunc, cspType_ share.TCspType) {
+func AdjustAdmWebhookName(f1 NvQueryK8sVerFunc, cspType_ share.TCspType) {
 	nvQueryK8sVerFunc = f1
-	nvVerifyK8sNsFunc = f2
 	cspType = cspType_
 	NvAdmMutatingWebhookName = fmt.Sprintf("%s.%s.svc", NvAdmMutatingName, NvAdmSvcNamespace)           // ex: neuvector-mutating-admission-webhook.neuvector.svc
 	NvAdmValidatingWebhookName = fmt.Sprintf("%s.%s.svc", NvAdmValidatingName, NvAdmSvcNamespace)       // ex: neuvector-validating-admission-webhook.neuvector.svc
@@ -1903,7 +1916,7 @@ func AdjustAdmWebhookName(f1 NvQueryK8sVerFunc, f2 NvVerifyK8sNsFunc, cspType_ s
 		rbacRolesWanted[nvCspUsageRole] = &k8sRbacRoleInfo{
 			name: nvCspUsageRole,
 			rules: []*k8sRbacRoleRuleInfo{
-				&k8sRbacRoleRuleInfo{
+				{
 					apiGroup:  "susecloud.net",
 					resources: utils.NewSet(RscTypeCrdNvCspUsage),
 					verbs:     utils.NewSet("get", "create", "update", "delete"),
@@ -2048,10 +2061,6 @@ func IsRancherFlavor() bool {
 	}
 
 	return false
-}
-
-func SetLeader(lead bool) {
-	isLeader = lead
 }
 
 func UpdateDeploymentReplicates(name string, replicas int32) error {

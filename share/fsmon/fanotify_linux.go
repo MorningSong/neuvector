@@ -1,6 +1,7 @@
 package fsmon
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	fanotify "github.com/s3rj1k/go-fanotify/fanotify"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 
@@ -44,8 +46,8 @@ type FaNotify struct {
 	bEnabled   bool
 	configPerm bool
 	agentPid   int
-	ourRootPid int
-	fa         *NotifyFD
+	//	ourRootPid int
+	fa         *fanotify.NotifyFD
 	roots      map[int]*rootFd
 	mntRoots   map[uint64]*rootFd
 	pidLookup  PidLookupCallback
@@ -55,15 +57,17 @@ type FaNotify struct {
 	bNVProtect bool
 }
 
-const faInitFlags = FAN_CLOEXEC | FAN_CLASS_CONTENT | FAN_UNLIMITED_MARKS
-const faMarkAddFlags = FAN_MARK_ADD
-const faMarkDelFlags = FAN_MARK_REMOVE
-const faMarkMask = FAN_CLOSE_WRITE | FAN_MODIFY
-const faMarkMaskDir = FAN_ONDIR | FAN_EVENT_ON_CHILD
+const faInitFlags = unix.FAN_CLOEXEC |
+	unix.FAN_CLASS_CONTENT |
+	unix.FAN_UNLIMITED_MARKS
+const faMarkAddFlags = unix.FAN_MARK_ADD
+const faMarkDelFlags = unix.FAN_MARK_REMOVE
+const faMarkMask = unix.FAN_CLOSE_WRITE | unix.FAN_MODIFY
+const faMarkMaskDir = unix.FAN_ONDIR | unix.FAN_EVENT_ON_CHILD
 
 func NewFaNotify(endFaChan chan bool, cb PidLookupCallback, nvrpt SendNVrptCallback, sys *system.SystemTools, bNvProtect bool) (*FaNotify, error) {
 	// log.Debug("FMON: ")
-	fa, err := Initialize(faInitFlags, os.O_RDONLY|syscall.O_LARGEFILE)
+	fa, err := fanotify.Initialize(faInitFlags, unix.O_RDONLY|unix.O_LARGEFILE)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +96,7 @@ func (fn *FaNotify) checkConfigPerm() bool {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	mask := uint64(FAN_OPEN_PERM | FAN_ONDIR)
+	mask := uint64(unix.FAN_OPEN_PERM | unix.FAN_ONDIR)
 	err = fn.fa.Mark(faMarkAddFlags, mask, 0, tmpDir)
 	if err != nil {
 		log.WithFields(log.Fields{"err": err}).Error("FMON: not supported")
@@ -100,8 +104,8 @@ func (fn *FaNotify) checkConfigPerm() bool {
 	}
 
 	err = fn.fa.Mark(faMarkDelFlags, mask, 0, tmpDir)
-	if err != nil {
-		log.WithFields(log.Fields{"err": err}).Debug("delete mark fail")
+	if err != nil && !os.IsNotExist(errors.Unwrap(err)) {
+		log.WithFields(log.Fields{"err": err}).Error("delete mark fail")
 	}
 	return true
 }
@@ -144,7 +148,7 @@ func (fn *FaNotify) GetWatches() []*share.CLUSFileMonitorFile {
 	return make([]*share.CLUSFileMonitorFile, 0)
 }
 
-//////
+// ////
 func (fn *FaNotify) RemoveMonitorFile(path string) {
 	log.WithFields(log.Fields{"path": path}).Debug("FMON:")
 	fn.mux.Lock()
@@ -159,8 +163,8 @@ func (fn *FaNotify) RemoveMonitorFile(path string) {
 		if ifd, exist := r.paths[rPath]; exist {
 			// if the file removed, the mark will be removed automaticly
 			err := fn.fa.Mark(faMarkDelFlags, ifd.mask, unix.AT_FDCWD, path)
-			if err != nil {
-				log.WithFields(log.Fields{"path": ifd.path, "err": err}).Debug("file")
+			if err != nil && !os.IsNotExist(errors.Unwrap(err)) {
+				log.WithFields(log.Fields{"path": ifd.path, "err": err}).Error("file")
 			}
 			delete(r.paths, rPath)
 			return
@@ -168,8 +172,8 @@ func (fn *FaNotify) RemoveMonitorFile(path string) {
 
 		if ifd, exist := r.dirs[rPath]; exist {
 			err := fn.fa.Mark(faMarkDelFlags, ifd.mask, unix.AT_FDCWD, path)
-			if err != nil {
-				log.WithFields(log.Fields{"path": ifd.path, "err": err}).Debug("dir")
+			if err != nil && !os.IsNotExist(errors.Unwrap(err)) {
+				log.WithFields(log.Fields{"path": ifd.path, "err": err}).Error("dir")
 			}
 			delete(r.dirs, rPath)
 			return
@@ -187,15 +191,18 @@ func (fn *FaNotify) RemoveMonitorFile(path string) {
 	}
 }
 
-//////
-//  note: ibm cloud does not support the FAN_MARK_FLUSH flag
+// ////
+//
+//	note: ibm cloud does not support the FAN_MARK_FLUSH flag
 func (fn *FaNotify) removeMarks(r *rootFd) {
 	// guarded by its calling function
 	// log.WithFields(log.Fields{"rootPid": rootPid}).Debug("FMON: cleanup")
 	ppath := fmt.Sprintf(procRootMountPoint, r.pid)
 	for dir, mask := range r.dirMonitorMap {
 		path := ppath + dir
-		fn.fa.Mark(FAN_MARK_REMOVE, mask, unix.AT_FDCWD, path)
+		if err := fn.fa.Mark(unix.FAN_MARK_REMOVE, mask, unix.AT_FDCWD, path); err != nil && !os.IsNotExist(errors.Unwrap(err)) {
+			log.WithFields(log.Fields{"err": err, "dir": path}).Error()
+		}
 	}
 
 	files := []string{"/etc/hosts", "/etc/hostname", "/etc/resolv.conf"}
@@ -203,7 +210,9 @@ func (fn *FaNotify) removeMarks(r *rootFd) {
 		if ifile, ok := r.paths[file]; ok {
 			path := ppath + file
 			mask := ifile.mask
-			fn.fa.Mark(FAN_MARK_REMOVE, mask, unix.AT_FDCWD, path)
+			if err := fn.fa.Mark(unix.FAN_MARK_REMOVE, mask, unix.AT_FDCWD, path); err != nil && !os.IsNotExist(errors.Unwrap(err)) {
+				log.WithFields(log.Fields{"err": err, "path": path}).Error()
+			}
 		}
 	}
 }
@@ -227,10 +236,10 @@ func (fn *FaNotify) ContainerCleanup(rootPid int) {
 	}
 }
 
-/////
+// ///
 func (fn *FaNotify) monitorExit() {
 	if fn.fa != nil {
-		fn.fa.Close()
+		fn.fa.File.Close()
 	}
 
 	if fn.endChan != nil {
@@ -238,7 +247,7 @@ func (fn *FaNotify) monitorExit() {
 	}
 }
 
-/////
+// ///
 func (fn *FaNotify) Close() {
 	log.Debug("FMON: ")
 	if !fn.bEnabled {
@@ -287,7 +296,7 @@ func (fn *FaNotify) GetWatchFileList(rootPid int) []*share.CLUSFileMonitorFile {
 				Protect: dir.protect,
 				Files:   make([]string, 0),
 			}
-			for fl, _ := range dir.files {
+			for fl := range dir.files {
 				file.Files = append(file.Files, fl)
 			}
 			watches = append(watches, file)
@@ -308,7 +317,7 @@ func ParseMonitorPath(path string) (int, string, error) {
 	return 0, "", fmt.Errorf("Invalid path")
 }
 
-/////
+// ///
 func (fn *FaNotify) addDirPath(r *rootFd, path string, bDir bool, mask uint64) {
 	// append monitor directory
 	dir := path
@@ -329,10 +338,9 @@ func (fn *FaNotify) addDirPath(r *rootFd, path string, bDir bool, mask uint64) {
 
 	r.dirMonitorMap[dir] |= faMarkMaskDir // always directory
 	// log.WithFields(log.Fields{"dir": dir, "dirMon": fmt.Sprintf("0x%08x", r.dirMonitorMap[dir]), "mask": fmt.Sprintf("0x%08x", mask)}).Debug("FMON:")
-	return
 }
 
-////
+// //
 func (fn *FaNotify) AddMonitorFile(path string, filter interface{}, protect, userAdded bool, cb NotifyCallback, params interface{}) bool {
 	if !fn.bEnabled {
 		return false
@@ -340,7 +348,7 @@ func (fn *FaNotify) AddMonitorFile(path string, filter interface{}, protect, use
 	return fn.addFile(path, filter, protect, false, userAdded, nil, cb, params)
 }
 
-/////
+// ///
 func (fn *FaNotify) AddMonitorDirFile(path string, filter interface{}, protect, userAdded bool, files map[string]interface{}, cb NotifyCallback, params interface{}) bool {
 	if !fn.bEnabled {
 		return false
@@ -348,26 +356,26 @@ func (fn *FaNotify) AddMonitorDirFile(path string, filter interface{}, protect, 
 	return fn.addFile(path, filter, protect, true, userAdded, files, cb, params)
 }
 
-//// TODO
+// // TODO
 func (fn *FaNotify) AddMonitorFileOnTheFly(path string, filter interface{}, protect, userAdded bool, cb NotifyCallback, params interface{}) bool {
 	if !fn.bEnabled {
 		return false
 	}
 
-	if fn.addFile(path, filter, protect, false, userAdded, nil, cb, params) {
-		// TODO: fn.addSingleFile(r *rootFd, path string, mask uint64)
-	}
+	fn.addFile(path, filter, protect, false, userAdded, nil, cb, params)
+	// TODO: fn.addSingleFile(r *rootFd, path string, mask uint64)
+
 	return false
 }
 
-////
+// //
 func (fn *FaNotify) addSingleFile(r *rootFd, path string, mask uint64) bool {
 	if !fn.bEnabled {
 		return false
 	}
 
-	if err := fn.fa.Mark(faMarkAddFlags, mask, unix.AT_FDCWD, path); err != nil {
-		log.WithFields(log.Fields{"path": path, "error": err}).Debug("FMON:")
+	if err := fn.fa.Mark(faMarkAddFlags, mask, unix.AT_FDCWD, path); err != nil && !os.IsNotExist(errors.Unwrap(err)) {
+		log.WithFields(log.Fields{"path": path, "error": err}).Error("FMON:")
 		return false
 	}
 
@@ -375,7 +383,7 @@ func (fn *FaNotify) addSingleFile(r *rootFd, path string, mask uint64) bool {
 	return true
 }
 
-////
+// //
 func (fn *FaNotify) addHostNetworkFilesCopiedFiles(r *rootFd) {
 	// only for /etc/ now: hosts, hostname, and resolv.conf
 	files := []string{"/etc/hosts", "/etc/hostname", "/etc/resolv.conf"}
@@ -384,14 +392,13 @@ func (fn *FaNotify) addHostNetworkFilesCopiedFiles(r *rootFd) {
 		if ifile, ok := r.paths[file]; ok {
 			path := ppath + file
 			mask := ifile.mask
-			if !fn.addSingleFile(r, path, mask) {
-				//	log.WithFields(log.Fields{"path": path}).Debug("FMON:")
-			}
+			fn.addSingleFile(r, path, mask)
+			//	log.WithFields(log.Fields{"path": path}).Debug("FMON:")
 		}
 	}
 }
 
-/////
+// ///
 func (fn *FaNotify) StartMonitor(rootPid int) bool {
 	if !fn.bEnabled {
 		return false
@@ -418,8 +425,8 @@ func (fn *FaNotify) StartMonitor(rootPid int) bool {
 	ppath := fmt.Sprintf(procRootMountPoint, rootPid)
 	for dir, mask := range r.dirMonitorMap {
 		path := ppath + dir
-		if err := fn.fa.Mark(faMarkAddFlags, mask, unix.AT_FDCWD, path); err != nil {
-			log.WithFields(log.Fields{"path": path, "error": err}).Debug("FMON:")
+		if err := fn.fa.Mark(faMarkAddFlags, mask, unix.AT_FDCWD, path); err != nil && !os.IsNotExist(errors.Unwrap(err)) {
+			log.WithFields(log.Fields{"path": path, "error": err}).Error("FMON:")
 		} else {
 			mLog.WithFields(log.Fields{"path": path, "mask": fmt.Sprintf("0x%08x", mask)}).Debug("FMON:")
 		}
@@ -430,7 +437,7 @@ func (fn *FaNotify) StartMonitor(rootPid int) bool {
 	return ok
 }
 
-//////
+// ////
 func (fn *FaNotify) addFile(path string, filter interface{}, protect, isDir, userAdded bool, files map[string]interface{}, cb NotifyCallback, params interface{}) bool {
 	if !fn.bEnabled {
 		return false
@@ -454,12 +461,12 @@ func (fn *FaNotify) addFile(path string, filter interface{}, protect, isDir, use
 	if userAdded || protect { // user-defined or protected: including access control
 		if r.permControl { // protect mode
 			if fn.configPerm { // system-wise : access control is available
-				mask |= FAN_OPEN_PERM
+				mask |= unix.FAN_OPEN_PERM
 			} else {
-				mask |= FAN_OPEN
+				mask |= unix.FAN_OPEN
 			}
 		} else {
-			mask |= FAN_OPEN
+			mask |= unix.FAN_OPEN
 		}
 	}
 
@@ -472,7 +479,7 @@ func (fn *FaNotify) addFile(path string, filter interface{}, protect, isDir, use
 				file.files[k] = v
 			}
 			// check dir existing
-			for name, _ := range file.files {
+			for name := range file.files {
 				fpath := file.path + "/" + name
 				if _, err := os.Stat(fpath); os.IsNotExist(err) {
 					delete(file.files, name)
@@ -518,11 +525,11 @@ func (fn *FaNotify) addFile(path string, filter interface{}, protect, isDir, use
 	return true
 }
 
-/////
+// ///
 func (fn *FaNotify) MonitorFileEvents() {
 	waitCnt := 0
 	pfd := make([]unix.PollFd, 1)
-	pfd[0].Fd = fn.fa.GetFd()
+	pfd[0].Fd = int32(fn.fa.Fd)
 	pfd[0].Events = unix.POLLIN
 	log.Info("FMON: start")
 	for {
@@ -543,7 +550,7 @@ func (fn *FaNotify) MonitorFileEvents() {
 		}
 
 		if (pfd[0].Revents & unix.POLLIN) != 0 {
-			if err := fn.handleEvents(); err != nil {
+			if err := fn.handleEvents(); err != nil && !errors.Is(errors.Unwrap(err), unix.EINTR) {
 				log.WithFields(log.Fields{"err": err}).Error("FMON: handle")
 				break
 			}
@@ -555,53 +562,64 @@ func (fn *FaNotify) MonitorFileEvents() {
 	log.Info("FMON: exit")
 }
 
-//////
+// ////
 func (fn *FaNotify) handleEvents() error {
-	if events, err := fn.fa.GetEvents(); err == nil {
-		for _, ev := range events {
-			// log.WithFields(log.Fields{"pid": pid, "fmask": fmt.Sprintf("0x%08x", fmask), "fd": fd}).Debug("FMON:")
-			pid := int(ev.Pid)
-			fd := int(ev.File.Fd())
-			fmask := uint64(ev.Mask)
-			perm := (fmask & (FAN_OPEN_PERM | FAN_ACCESS_PERM)) > 0
+	for {
+		ev, err := fn.fa.GetEvent(os.Getpid())
+		if err != nil {
+			return err
+		}
+		if ev == nil {
+			return nil
+		}
+		pid := int(ev.Pid)
+		fd := int(ev.Fd)
+		fmask := uint64(ev.Mask)
+		perm := (fmask & (unix.FAN_OPEN_PERM | unix.FAN_ACCESS_PERM)) > 0
 
-			resp, mask, nvPod, ifile, pInfo := fn.calculateResponse(pid, fd, fmask, perm)
-			if perm {
-				fn.fa.Response(ev, resp)
+		// log.WithFields(log.Fields{"pid": pid, "fmask": fmt.Sprintf("0x%08x", fmask), "fd": fd}).Debug("FMON:")
+		resp, mask, nvPod, ifile, pInfo := fn.calculateResponse(pid, fd, fmask, perm)
+		if perm {
+			if resp {
+				err = fn.fa.ResponseAllow(ev)
+			} else {
+				err = fn.fa.ResponseDeny(ev)
 			}
-			ev.File.Close()
-
-			if nvPod {
-				if resp == false && ifile != nil && pInfo != nil {
-					finfo := ifile.params.(*osutil.FileInfoExt)
-					_, path := fn.sys.ParseContainerFilePath(ifile.path)
-					log.WithFields(log.Fields{"path": path, "caller": pInfo.Path, "pid": pid}).Info("FMON: NV Protect")
-					go fn.sendNVrpt(pInfo.RootPid, pid, finfo.ContainerId, path, pInfo.Path)
-				}
-				continue
-			}
-
-			if ifile == nil {
-				continue // nothing to justify
-			}
-
-			change := (fmask & FAN_CLOSE_WRITE) > 0
-			// log.WithFields(log.Fields{"ifile": ifile, "pInfo": pInfo, "Resp": resp, "Change": change, "Perm": perm}).Debug("FMON:")
-
-			var bReporting bool
-			if ifile.learnt { // discover mode
-				bReporting = ifile.userAdd // learn app for customer-added entry
-			} else { // monitor or protect mode
-				allowRead := resp && !change
-				bReporting = (allowRead == false) // allowed app by block_access
-			}
-
-			if bReporting || change { // report changed file
-				ifile.cb(ifile.path, mask, ifile.params, pInfo)
+			if err != nil {
+				log.WithFields(log.Fields{"err": err, "pid": pid, "resp": resp}).Error()
 			}
 		}
+		ev.Close()
+
+		if nvPod {
+			if !resp && ifile != nil && pInfo != nil {
+				finfo := ifile.params.(*osutil.FileInfoExt)
+				_, path := fn.sys.ParseContainerFilePath(ifile.path)
+				log.WithFields(log.Fields{"path": path, "caller": pInfo.Path, "pid": pid}).Info("FMON: NV Protect")
+				go fn.sendNVrpt(pInfo.RootPid, pid, finfo.ContainerId, path, pInfo.Path)
+			}
+			continue
+		}
+
+		if ifile == nil {
+			continue // nothing to justify
+		}
+
+		change := (fmask & unix.FAN_CLOSE_WRITE) > 0
+		// log.WithFields(log.Fields{"ifile": ifile, "pInfo": pInfo, "Resp": resp, "Change": change, "Perm": perm}).Debug("FMON:")
+
+		var bReporting bool
+		if ifile.learnt { // discover mode
+			bReporting = ifile.userAdd // learn app for customer-added entry
+		} else { // monitor or protect mode
+			allowRead := resp && !change
+			bReporting = !allowRead // allowed app by block_access
+		}
+
+		if bReporting || change { // report changed file
+			ifile.cb(ifile.path, mask, ifile.params, pInfo)
+		}
 	}
-	return nil
 }
 
 func (fn *FaNotify) calculateResponse(pid, fd int, fmask uint64, perm bool) (bool, uint32, bool, *IFile, *ProcInfo) {
@@ -711,10 +729,10 @@ func (fn *FaNotify) calculateResponse(pid, fd int, fmask uint64, perm bool) (boo
 		// log.WithFields(log.Fields{"resp": resp}).Debug("FMON:")
 	}
 
-	if (fmask & FAN_MODIFY) > 0 {
+	if (fmask & unix.FAN_MODIFY) > 0 {
 		mask |= syscall.IN_MODIFY
 		log.WithFields(log.Fields{"path": linkPath}).Debug("FMON: modified")
-	} else if (fmask & FAN_CLOSE_WRITE) > 0 {
+	} else if (fmask & unix.FAN_CLOSE_WRITE) > 0 {
 		mask |= syscall.IN_CLOSE_WRITE
 		log.WithFields(log.Fields{"path": linkPath}).Debug("FMON: cls_wr")
 	} else {
@@ -807,7 +825,7 @@ func (fn *FaNotify) lookupContainer(pid int) (r *rootFd, pInfo *ProcInfo) {
 	pInfo = fn.pidLookup(pid)
 	if pInfo != nil {
 		fn.mux.RLock()
-		r, _ = fn.roots[pInfo.RootPid]
+		r = fn.roots[pInfo.RootPid]
 		fn.mux.RUnlock()
 	}
 
@@ -820,7 +838,7 @@ func (fn *FaNotify) lookupContainer(pid int) (r *rootFd, pInfo *ProcInfo) {
 			return
 		}
 		fn.mux.RLock()
-		r, _ = fn.mntRoots[mntId]
+		r = fn.mntRoots[mntId]
 		fn.mux.RUnlock()
 
 		if r == nil {
@@ -836,7 +854,6 @@ func (fn *FaNotify) lookupContainer(pid int) (r *rootFd, pInfo *ProcInfo) {
 		}
 		if r != nil {
 			pInfo.RootPid = r.pid
-		} else {
 		}
 	}
 	if pInfo.Pid == 0 {
@@ -870,7 +887,7 @@ func (fn *FaNotify) UpdateAccessRule(rootPid int, conf *share.CLUSFileAccessRule
 	return nil
 }
 
-////////
+// //////
 func (fn *FaNotify) GetProbeData(m *FaMonProbeData) {
 	fn.mux.Lock()
 	defer fn.mux.Unlock()

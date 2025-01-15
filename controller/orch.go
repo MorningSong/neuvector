@@ -74,7 +74,6 @@ func (c *orchConn) cbWatcherState(state string, err error) {
 			log.WithFields(log.Fields{"error": err}).Error()
 		}
 	}
-	return
 }
 
 func (c *orchConn) cbResourceWatcher(rt string, event string, res interface{}, old interface{}) {
@@ -104,31 +103,31 @@ func (c *orchConn) cbResourceWatcher(rt string, event string, res interface{}, o
 		if event == resource.WatchEventDelete {
 			k8sResLog.WithFields(log.Fields{"event": event, "type": rt, "object": res, "old object": old}).Debug("Event received")
 			nvCrdInfo := map[string]*resource.NvCrdInfo{
-				resource.NvSecurityRuleName: &resource.NvCrdInfo{
+				resource.NvSecurityRuleName: {
 					LockKey:   share.CLUSLockPolicyKey,
 					KvCrdKind: resource.NvSecurityRuleKind,
 				},
-				resource.NvClusterSecurityRuleName: &resource.NvCrdInfo{
+				resource.NvClusterSecurityRuleName: {
 					LockKey:   share.CLUSLockPolicyKey,
 					KvCrdKind: resource.NvSecurityRuleKind,
 				},
-				resource.NvAdmCtrlSecurityRuleName: &resource.NvCrdInfo{
+				resource.NvAdmCtrlSecurityRuleName: {
 					LockKey:   share.CLUSLockAdmCtrlKey,
 					KvCrdKind: resource.NvAdmCtrlSecurityRuleKind,
 				},
-				resource.NvDlpSecurityRuleName: &resource.NvCrdInfo{
+				resource.NvDlpSecurityRuleName: {
 					LockKey:   share.CLUSLockPolicyKey,
 					KvCrdKind: resource.NvDlpSecurityRuleKind,
 				},
-				resource.NvWafSecurityRuleName: &resource.NvCrdInfo{
+				resource.NvWafSecurityRuleName: {
 					LockKey:   share.CLUSLockPolicyKey,
 					KvCrdKind: resource.NvWafSecurityRuleKind,
 				},
-				resource.NvVulnProfileSecurityRuleName: &resource.NvCrdInfo{
+				resource.NvVulnProfileSecurityRuleName: {
 					LockKey:   share.CLUSLockVulnKey,
 					KvCrdKind: resource.NvVulnProfileSecurityRuleKind,
 				},
-				resource.NvCompProfileSecurityRuleName: &resource.NvCrdInfo{
+				resource.NvCompProfileSecurityRuleName: {
 					LockKey:   share.CLUSLockCompKey,
 					KvCrdKind: resource.NvCompProfileSecurityRuleKind,
 				},
@@ -195,9 +194,13 @@ func (c *orchConn) Start(ocImageRegistered bool, cspType share.TCspType) {
 	rscTypes := []string{resource.RscTypeCrd, resource.RscTypeService, resource.RscTypePod, resource.RscTypeRBAC,
 		resource.RscTypeValidatingWebhookConfiguration, resource.RscTypePersistentVolumeClaim}
 	for _, r := range rscTypes {
-		global.ORCH.StartWatchResource(r, k8s.AllNamespaces, c.cbResourceWatcher, nil)
+		if err := global.ORCH.StartWatchResource(r, k8s.AllNamespaces, c.cbResourceWatcher, nil); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("StartWatchResource")
+		}
 	}
-	global.ORCH.StartWatchResource(resource.RscTypeDeployment, Ctrler.Domain, c.cbResourceWatcher, nil)
+	if err := global.ORCH.StartWatchResource(resource.RscTypeDeployment, Ctrler.Domain, c.cbResourceWatcher, nil); err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("StartWatchResource")
+	}
 
 	rscTypes = []string{
 		resource.RscTypeCrdSecurityRule,
@@ -209,16 +212,22 @@ func (c *orchConn) Start(ocImageRegistered bool, cspType share.TCspType) {
 		resource.RscTypeCrdCompProfile,
 	}
 	for _, r := range rscTypes {
-		global.ORCH.RegisterResource(r)
+		if err := global.ORCH.RegisterResource(r); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("RegisterResource")
+		}
 	}
 
 	if cspType != share.CSP_NONE {
-		global.ORCH.RegisterResource(resource.RscTypeCrdNvCspUsage)
+		if err := global.ORCH.RegisterResource(resource.RscTypeCrdNvCspUsage); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("RegisterResource")
+		}
 	}
 
 	if ocImageRegistered {
 		r = resource.RscTypeImage
-		global.ORCH.StartWatchResource(r, k8s.AllNamespaces, c.cbResourceWatcher, c.cbWatcherState)
+		if err := global.ORCH.StartWatchResource(r, k8s.AllNamespaces, c.cbResourceWatcher, c.cbWatcherState); err != nil {
+			log.WithFields(log.Fields{"error": err}).Error("StartWatchResource")
+		}
 	}
 }
 
@@ -227,12 +236,16 @@ func (c *orchConn) LeadChangeNotify(isLeader bool) {
 }
 
 func (c *orchConn) Stop() {
-	global.ORCH.StopWatchAllResources()
+	if err := global.ORCH.StopWatchAllResources(); err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("StopWatchAllResources")
+	}
 	c.cbWatcherState(resource.ConnStateNone, nil)
 }
 
 func (c *orchConn) Close() {
-	global.ORCH.StopWatchAllResources()
+	if err := global.ORCH.StopWatchAllResources(); err != nil {
+		log.WithFields(log.Fields{"error": err}).Error("StopWatchAllResources")
+	}
 }
 
 func newOrchConnector(orchObjChan, orchScanChan chan *resource.Event, leader bool) orchConnInterface {

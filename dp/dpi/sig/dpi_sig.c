@@ -5,14 +5,16 @@
 uint32_t DlpRuleCount = 0;
 
 #define MAX_USER_SIG_COUNT (DPI_SIG_MAX_USER_SIG_ID - DPI_SIG_MIN_USER_SIG_ID + 1)
-#define MAX_USER_SIG_LEN 1280//1024+256
+#define MAX_USER_SIG_LEN 2048
+
+static void dpi_dlp_init_macro_rulelist(dpi_sig_macro_sig_t *macro);
 
 static dpi_sigopt_status_t
 dpi_dlp_parse_opts_routine (dpi_dlp_parser_t *parser, char **opts, int count,
                             dpi_sig_t *rule, void *dlpdetector);
 
 static dpi_dlp_parser_t DlpRuleParser = {
-    parse_dlpopts:    dpi_dlp_parse_opts_routine,
+    .parse_dlpopts = dpi_dlp_parse_opts_routine,
 };
 
 static dpi_sigopt_status_t
@@ -75,6 +77,7 @@ dpi_dlp_parse_opts_routine (dpi_dlp_parser_t *parser, char **opts, int count,
         DEBUG_ERROR(DBG_ERROR, "too many dlp rule (%d) created, max allowed is (%d) ", DlpRuleCount, MAX_USER_SIG_COUNT);
         return DPI_SIGOPT_TOO_MANY_DLP_RULE;
     }
+    //conf->text null terminated
     if (strlen(conf->text) >= MAX_USER_SIG_LEN) {
         DEBUG_ERROR(DBG_ERROR, "dlp rule len(%d) too long, max allowed is (%d) ", strlen(conf->text), MAX_USER_SIG_LEN);
         return DPI_SIGOPT_VALUE_TOO_LONG;
@@ -143,6 +146,7 @@ void dpi_dlp_release_macro_rule (dpi_sig_macro_sig_t *macro)
     if (macro->conf.description) {
        free(macro->conf.description);
     }
+    dpi_dlp_init_macro_rulelist(macro);
     cds_list_for_each_entry_safe(sig_itr, sig_next, &macro->sigs, node) {
         cds_list_del((struct cds_list_head *)sig_itr);
 
@@ -195,6 +199,7 @@ dpi_dlp_parse_rule (dpi_dlp_parser_t *parser, char **opts, int count,
     dpi_sig_macro_sig_t *macro;
     dpi_sig_t *sig;
     int i;
+    //text is null terminated
     int text_len = strlen(text);
 
     for (i = 0; i < count; i ++) {
@@ -323,11 +328,11 @@ dpi_action_cate_t dpi_dlp_get_action_category(int act)
 }
 
 static dpi_sig_context_class_t ContextType2Class[DPI_SIG_CONTEXT_TYPE_MAX] = {
-    [DPI_SIG_CONTEXT_TYPE_URI_ORIGIN]         DPI_SIG_CONTEXT_CLASS_URI,
-    [DPI_SIG_CONTEXT_TYPE_HEADER]             DPI_SIG_CONTEXT_CLASS_HEADER,
-    [DPI_SIG_CONTEXT_TYPE_BODY]               DPI_SIG_CONTEXT_CLASS_BODY,
-    [DPI_SIG_CONTEXT_TYPE_SQL_QUERY]          DPI_SIG_CONTEXT_CLASS_BODY,
-    [DPI_SIG_CONTEXT_TYPE_PACKET_ORIGIN]      DPI_SIG_CONTEXT_CLASS_PACKET,
+    [DPI_SIG_CONTEXT_TYPE_URI_ORIGIN] = DPI_SIG_CONTEXT_CLASS_URI,
+    [DPI_SIG_CONTEXT_TYPE_HEADER] = DPI_SIG_CONTEXT_CLASS_HEADER,
+    [DPI_SIG_CONTEXT_TYPE_BODY] = DPI_SIG_CONTEXT_CLASS_BODY,
+    [DPI_SIG_CONTEXT_TYPE_SQL_QUERY] = DPI_SIG_CONTEXT_CLASS_BODY,
+    [DPI_SIG_CONTEXT_TYPE_PACKET_ORIGIN] = DPI_SIG_CONTEXT_CLASS_PACKET,
 };
 
 dpi_sig_context_class_t dpi_dlp_ctxt_type_2_cat (dpi_sig_context_type_t t)

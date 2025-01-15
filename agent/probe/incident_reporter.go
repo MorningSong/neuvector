@@ -1,7 +1,7 @@
 package probe
 
 import (
-	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
@@ -15,7 +15,7 @@ import (
 	"github.com/neuvector/neuvector/share/utils"
 )
 
-//////////////////////
+// ////////////////////
 type probeMsgAggregate struct {
 	// state machine
 	triggerCnt int
@@ -39,27 +39,27 @@ const expireCountdown = 4 + 1   // 5 seconds: triggered in 20-25 sec
 func genUniqEventKey(msgtype, pid int, id string) string {
 	keyString := fmt.Sprintf("%d:%d:%s:%v", msgtype, pid, id, time.Now())
 	// log.WithFields(log.Fields{"keyString": keyString}).Debug("PROC:")
-	b := md5.Sum([]byte(keyString))
+	b := sha256.Sum256([]byte(keyString))
 	return hex.EncodeToString(b[:])
 }
 
 func genEscalReportKey(msgtype int, pmsg *ProbeEscalation) string {
 	keyString := fmt.Sprintf("%d:%d:%d:%s:%s:%s", msgtype, pmsg.RUid, pmsg.EUid, pmsg.RealUser, pmsg.EffUser, pmsg.ID)
-	b := md5.Sum([]byte(keyString))
+	b := sha256.Sum256([]byte(keyString))
 	return string(b[:])
 }
 
 func genProcessReportKey(msgtype int, pmsg *ProbeProcess) string {
 	keyString := fmt.Sprintf("%d:%s:%s:%v:%s", msgtype, pmsg.Name, pmsg.Path, pmsg.Cmds, pmsg.ID)
 	// log.WithFields(log.Fields{"keyString": keyString}).Debug("PROC:")
-	b := md5.Sum([]byte(keyString))
+	b := sha256.Sum256([]byte(keyString))
 	return hex.EncodeToString(b[:])
 }
 
 func genFsMonReportKey(msgtype int, pmsg *fsmon.MonitorMessage) (string, string) {
 	keyString := fmt.Sprintf("%d:%s:%s:%s", msgtype, pmsg.ID, pmsg.Path, pmsg.Msg)
 	// log.WithFields(log.Fields{"keyString": keyString}).Debug("PROC:")
-	b := md5.Sum([]byte(keyString))
+	b := sha256.Sum256([]byte(keyString))
 	return hex.EncodeToString(b[:]), genUniqEventKey(msgtype, pmsg.ProcPid, pmsg.ID)
 }
 
@@ -151,7 +151,7 @@ func (p *Probe) SendAggregateProbeReport(pmsg *ProbeMessage, bExtOp bool) bool {
 	return true // send immediately
 }
 
-/////
+// ///
 // dpkg[ubuntu, debian], yum[centos,fedora] , dnf[centos, coreos,fedora], rpm[redhat], apk[busybox], zypper[bci]
 var pkgCmds utils.Set = utils.NewSet("dpkg", "yum", "dnf", "rpm", "apk", "zypper")
 
@@ -162,7 +162,7 @@ const (
 	fsNvProtectProcAlert = "NV.Protect: Process alert"
 )
 
-/////
+// ///
 func (p *Probe) SendAggregateFsMonReport(pmsg *fsmon.MonitorMessage) bool {
 	if pmsg.Msg == fsNvProtectProcAlert {
 		p.sendFsmonNVProtectProbeReport(pmsg)
@@ -280,7 +280,7 @@ func (p *Probe) SendAggregateFsMonReport(pmsg *fsmon.MonitorMessage) bool {
 	return true // send immediately
 }
 
-/// aggregate worker
+// / aggregate worker
 func (p *Probe) processAggregateProbeReports() int {
 	var cnt int
 

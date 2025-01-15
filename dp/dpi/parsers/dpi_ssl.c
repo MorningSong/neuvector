@@ -119,12 +119,16 @@ static int ssl_parse_x509(dpi_packet_t *p, uint8_t *ptr, int len)
 
     // version, Version  ::=  INTEGER  {  v1(0), v2(1), v3(2)  }
     ret = asn1_read_header(&asn1, &buf);
+    if (ret != ASN1_ERR_NONE) return ret;
+
     if (asn1.class != ASN1_CLASS_CONTEXT) {
         // serialNumber, CertificateSerialNumber  ::=  INTEGER
         ret = asn1_read_integer(&asn1, &buf, &dummy);
         if (ret != ASN1_ERR_NONE && ret != ASN1_ERR_LONG) return ret;
     } else {
         ret = asn1_read_header(&asn1, &buf);
+        if (ret != ASN1_ERR_NONE) return ret;
+
         ret = asn1_read_integer(&asn1, &buf, &ver);
         if (ret != ASN1_ERR_NONE) return ret;
         if (ver > 2) {
@@ -132,6 +136,8 @@ static int ssl_parse_x509(dpi_packet_t *p, uint8_t *ptr, int len)
         }
         // serialNumber, CertificateSerialNumber  ::=  INTEGER
         ret = asn1_read_header(&asn1, &buf);
+        if (ret != ASN1_ERR_NONE) return ret;
+
         ret = asn1_read_integer(&asn1, &buf, &dummy);
         if (ret != ASN1_ERR_NONE && ret != ASN1_ERR_LONG) return ret;
     }
@@ -281,10 +287,9 @@ void ssl_get_sni_v3(dpi_packet_t *p, uint8_t *ptr, ssl_record_t *rec)
             uint16_t namelen = GET_BIG_INT16(tptr);
             tptr += 2;
             //DEBUG_LOG(DBG_PARSER, p, "ssl: snilen(%hu), sniname(%s)\n", namelen,(char *)tptr);
-            strncpy((char *)s->vhost, (char *)tptr, namelen);
-            s->vhost[namelen] = '\0';
-            s->vhlen = namelen;
-            tptr += namelen;
+            int size = min(namelen+1, sizeof(s->vhost));
+            strlcpy((char *)s->vhost, (char *)tptr, size);
+            s->vhlen = size-1;
             break;
         } else {
             tptr += ext_len;
@@ -516,7 +521,11 @@ static void ssl_parser(dpi_packet_t *p)
 
 #define SSL_MIN_RECORD_LEN 7 // minimum length to determine ssl version
 #define SSL_MAX_RECORD_LEN 8192
-    ssl_record_t rec;
+    ssl_record_t rec = {//initialize
+        .ver = 0,
+        .len = 0,
+        .type = 0,
+    };
     while (len > SSL_MIN_RECORD_LEN) {
         if (!dpi_is_parser_final(p)) {
             int ver = get_ssl_ver(p, ptr, len);
@@ -675,12 +684,12 @@ static void ssl_delete_data(void *data)
 }
 
 static dpi_parser_t dpi_parser_ssl = {
-    new_session: ssl_new_session,
-    delete_data: ssl_delete_data,
-    parser:      ssl_parser,
-    name:        "ssl",
-    ip_proto:    IPPROTO_TCP,
-    type:        DPI_PARSER_SSL,
+    .new_session = ssl_new_session,
+    .delete_data = ssl_delete_data,
+    .parser = ssl_parser,
+    .name = "ssl",
+    .ip_proto = IPPROTO_TCP,
+    .type = DPI_PARSER_SSL,
 };
 
 dpi_parser_t *dpi_ssl_parser(void)

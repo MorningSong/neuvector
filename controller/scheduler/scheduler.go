@@ -83,7 +83,7 @@ func (s *Schd) DelProcessor(name string) (string, error) {
 			break
 		}
 	}
-	if found == false {
+	if !found {
 		return "", fmt.Errorf("proc %s doesn't exist", name)
 	} else {
 		s.procs = append(s.procs[:i], s.procs[i+1:]...)
@@ -227,34 +227,31 @@ func (s *Schd) taskNotify() {
 }
 
 func (s *Schd) taskWorker() {
-	for {
-		select {
-		case <-s.notifyChan:
-			for {
-				proc := s.getAvailableProc()
-				if proc == nil {
-					break
-				}
-				task := s.getNextTask()
-				if task == nil {
-					break
-				}
-				action := task.Handler(proc.name)
-				switch action {
-				case TaskActionWait:
-					task.StartTimer()
-					s.lock()
-					proc.currTask = task
-					s.unlock()
-				case TaskActionRetry:
-					s.AddTask(task, true)
-				case TaskActionRequeue:
-					s.AddTask(task, false)
-				case TaskActionRequeueWait:
-					/* the task will be requeued when the timer expires */
-					task.StartTimer()
-				case TaskActionDone:
-				}
+	for range s.notifyChan {
+		for {
+			proc := s.getAvailableProc()
+			if proc == nil {
+				break
+			}
+			task := s.getNextTask()
+			if task == nil {
+				break
+			}
+			action := task.Handler(proc.name)
+			switch action {
+			case TaskActionWait:
+				task.StartTimer()
+				s.lock()
+				proc.currTask = task
+				s.unlock()
+			case TaskActionRetry:
+				s.AddTask(task, true)
+			case TaskActionRequeue:
+				s.AddTask(task, false)
+			case TaskActionRequeueWait:
+				// The task will be requeued when the timer expires
+				task.StartTimer()
+			case TaskActionDone:
 			}
 		}
 	}

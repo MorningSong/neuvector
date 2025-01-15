@@ -3,6 +3,8 @@ package scan
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestParsePythonPackage(t *testing.T) {
@@ -31,26 +33,26 @@ func TestParsePythonPackage(t *testing.T) {
 		"usr/lib/python2.7/site-packages/requests-2.18.4.dist-info/WHEEL",
 	}
 	results := map[string]AppPackage{
-		"python:Python":         AppPackage{ModuleName: "python:Python", Version: "2.7"},
-		"python:PyGObject":      AppPackage{ModuleName: "python:PyGObject", Version: "3.30.1"},
-		"python:SecretStorage":  AppPackage{ModuleName: "python:SecretStorage", Version: "2.3.1"},
-		"python:keyrings.alt":   AppPackage{ModuleName: "python:keyrings.alt", Version: "3.1"},
-		"python:pip":            AppPackage{ModuleName: "python:pip", Version: "9.0.1"},
-		"python:systemd_python": AppPackage{ModuleName: "python:systemd_python", Version: "234"},
-		"python:PyYAML":         AppPackage{ModuleName: "python:PyYAML", Version: "3.12"},
-		"python:setuptools":     AppPackage{ModuleName: "python:setuptools", Version: "39.1.0.post20180508"},
-		"python:meld3":          AppPackage{ModuleName: "python:meld3", Version: "1.0.2"},
-		"python:prettytable":    AppPackage{ModuleName: "python:prettytable", Version: "0.7.2"},
-		"python:cmd2":           AppPackage{ModuleName: "python:cmd2", Version: "0.6.8"},
-		"python:supervisor":     AppPackage{ModuleName: "python:supervisor", Version: "3.3.4"},
-		"python:chardet":        AppPackage{ModuleName: "python:chardet", Version: "3.0.4"},
-		"python:idna":           AppPackage{ModuleName: "python:idna", Version: "2.6"},
-		"python:certifi":        AppPackage{ModuleName: "python:certifi", Version: "2018.11.29"},
-		"python:urllib3":        AppPackage{ModuleName: "python:urllib3", Version: "1.22"},
-		"python:click":          AppPackage{ModuleName: "python:click", Version: "6.7"},
-		"python:six":            AppPackage{ModuleName: "python:six", Version: "1.10.0"},
-		"python:pyparsing":      AppPackage{ModuleName: "python:pyparsing", Version: "2.3.0"},
-		"python:requests":       AppPackage{ModuleName: "python:requests", Version: "2.18.4"},
+		"python:Python":         {ModuleName: "python:Python", Version: "2.7"},
+		"python:PyGObject":      {ModuleName: "python:PyGObject", Version: "3.30.1"},
+		"python:SecretStorage":  {ModuleName: "python:SecretStorage", Version: "2.3.1"},
+		"python:keyrings.alt":   {ModuleName: "python:keyrings.alt", Version: "3.1"},
+		"python:pip":            {ModuleName: "python:pip", Version: "9.0.1"},
+		"python:systemd_python": {ModuleName: "python:systemd_python", Version: "234"},
+		"python:PyYAML":         {ModuleName: "python:PyYAML", Version: "3.12"},
+		"python:setuptools":     {ModuleName: "python:setuptools", Version: "39.1.0.post20180508"},
+		"python:meld3":          {ModuleName: "python:meld3", Version: "1.0.2"},
+		"python:prettytable":    {ModuleName: "python:prettytable", Version: "0.7.2"},
+		"python:cmd2":           {ModuleName: "python:cmd2", Version: "0.6.8"},
+		"python:supervisor":     {ModuleName: "python:supervisor", Version: "3.3.4"},
+		"python:chardet":        {ModuleName: "python:chardet", Version: "3.0.4"},
+		"python:idna":           {ModuleName: "python:idna", Version: "2.6"},
+		"python:certifi":        {ModuleName: "python:certifi", Version: "2018.11.29"},
+		"python:urllib3":        {ModuleName: "python:urllib3", Version: "1.22"},
+		"python:click":          {ModuleName: "python:click", Version: "6.7"},
+		"python:six":            {ModuleName: "python:six", Version: "1.10.0"},
+		"python:pyparsing":      {ModuleName: "python:pyparsing", Version: "2.3.0"},
+		"python:requests":       {ModuleName: "python:requests", Version: "2.18.4"},
 	}
 	ap := NewScanApps(false)
 	for _, tt := range tests {
@@ -129,50 +131,50 @@ func TestParseRubyPackage(t *testing.T) {
 		"/usr/local/lib/ruby/gems/2.6.0/specifications/xmlrpc-0.3.0.gemspec",
 	}
 	results := map[string]AppPackage{
-		"ruby:power_assert": AppPackage{ModuleName: "ruby:power_assert", Version: "1.1.3"},
-		"ruby:net-telnet":   AppPackage{ModuleName: "ruby:net-telnet", Version: "0.2.0"},
-		"ruby:csv":          AppPackage{ModuleName: "ruby:csv", Version: "3.0.4"},
-		"ruby:fiddle":       AppPackage{ModuleName: "ruby:fiddle", Version: "1.0.0"},
-		"ruby:date":         AppPackage{ModuleName: "ruby:date", Version: "2.0.0"},
-		"ruby:zlib":         AppPackage{ModuleName: "ruby:zlib", Version: "1.0.0"},
-		"ruby:matrix":       AppPackage{ModuleName: "ruby:matrix", Version: "0.1.0"},
-		"ruby:rdoc":         AppPackage{ModuleName: "ruby:rdoc", Version: "6.1.0"},
-		"ruby:strscan":      AppPackage{ModuleName: "ruby:strscan", Version: "1.0.0"},
-		"ruby:ostruct":      AppPackage{ModuleName: "ruby:ostruct", Version: "0.1.0"},
-		"ruby:scanf":        AppPackage{ModuleName: "ruby:scanf", Version: "1.0.0"},
-		"ruby:sync":         AppPackage{ModuleName: "ruby:sync", Version: "0.5.0"},
-		"ruby:forwardable":  AppPackage{ModuleName: "ruby:forwardable", Version: "1.2.0"},
-		"ruby:tracer":       AppPackage{ModuleName: "ruby:tracer", Version: "0.1.0"},
-		"ruby:io-console":   AppPackage{ModuleName: "ruby:io-console", Version: "0.4.7"},
-		"ruby:bigdecimal":   AppPackage{ModuleName: "ruby:bigdecimal", Version: "1.4.1"},
-		"ruby:psych":        AppPackage{ModuleName: "ruby:psych", Version: "3.1.0"},
-		"ruby:stringio":     AppPackage{ModuleName: "ruby:stringio", Version: "0.0.2"},
-		"ruby:ipaddr":       AppPackage{ModuleName: "ruby:ipaddr", Version: "1.2.2"},
-		"ruby:bundler":      AppPackage{ModuleName: "ruby:bundler", Version: "1.17.2"},
-		"ruby:e2mmap":       AppPackage{ModuleName: "ruby:e2mmap", Version: "0.1.0"},
-		"ruby:fcntl":        AppPackage{ModuleName: "ruby:fcntl", Version: "1.0.0"},
-		"ruby:logger":       AppPackage{ModuleName: "ruby:logger", Version: "1.3.0"},
-		"ruby:mutex_m":      AppPackage{ModuleName: "ruby:mutex_m", Version: "0.1.0"},
-		"ruby:rss":          AppPackage{ModuleName: "ruby:rss", Version: "0.2.7"},
-		"ruby:openssl":      AppPackage{ModuleName: "ruby:openssl", Version: "2.1.2"},
-		"ruby:etc":          AppPackage{ModuleName: "ruby:etc", Version: "1.0.1"},
-		"ruby:prime":        AppPackage{ModuleName: "ruby:prime", Version: "0.1.0"},
-		"ruby:gdbm":         AppPackage{ModuleName: "ruby:gdbm", Version: "2.0.0"},
-		"ruby:cmath":        AppPackage{ModuleName: "ruby:cmath", Version: "1.0.0"},
-		"ruby:shell":        AppPackage{ModuleName: "ruby:shell", Version: "0.7"},
-		"ruby:irb":          AppPackage{ModuleName: "ruby:irb", Version: "1.0.0"},
-		"ruby:webrick":      AppPackage{ModuleName: "ruby:webrick", Version: "1.4.2"},
-		"ruby:fileutils":    AppPackage{ModuleName: "ruby:fileutils", Version: "1.1.0"},
-		"ruby:dbm":          AppPackage{ModuleName: "ruby:dbm", Version: "1.0.0"},
-		"ruby:thwait":       AppPackage{ModuleName: "ruby:thwait", Version: "0.1.0"},
-		"ruby:sdbm":         AppPackage{ModuleName: "ruby:sdbm", Version: "1.0.0"},
-		"ruby:json":         AppPackage{ModuleName: "ruby:json", Version: "2.1.0"},
-		"ruby:rexml":        AppPackage{ModuleName: "ruby:rexml", Version: "3.1.9"},
-		"ruby:minitest":     AppPackage{ModuleName: "ruby:minitest", Version: "5.11.3"},
-		"ruby:test-unit":    AppPackage{ModuleName: "ruby:test-unit", Version: "3.2.9"},
-		"ruby:rake":         AppPackage{ModuleName: "ruby:rake", Version: "12.3.2"},
-		"ruby:did_you_mean": AppPackage{ModuleName: "ruby:did_you_mean", Version: "1.3.0"},
-		"ruby:xmlrpc":       AppPackage{ModuleName: "ruby:xmlrpc", Version: "0.3.0"},
+		"ruby:power_assert": {ModuleName: "ruby:power_assert", Version: "1.1.3"},
+		"ruby:net-telnet":   {ModuleName: "ruby:net-telnet", Version: "0.2.0"},
+		"ruby:csv":          {ModuleName: "ruby:csv", Version: "3.0.4"},
+		"ruby:fiddle":       {ModuleName: "ruby:fiddle", Version: "1.0.0"},
+		"ruby:date":         {ModuleName: "ruby:date", Version: "2.0.0"},
+		"ruby:zlib":         {ModuleName: "ruby:zlib", Version: "1.0.0"},
+		"ruby:matrix":       {ModuleName: "ruby:matrix", Version: "0.1.0"},
+		"ruby:rdoc":         {ModuleName: "ruby:rdoc", Version: "6.1.0"},
+		"ruby:strscan":      {ModuleName: "ruby:strscan", Version: "1.0.0"},
+		"ruby:ostruct":      {ModuleName: "ruby:ostruct", Version: "0.1.0"},
+		"ruby:scanf":        {ModuleName: "ruby:scanf", Version: "1.0.0"},
+		"ruby:sync":         {ModuleName: "ruby:sync", Version: "0.5.0"},
+		"ruby:forwardable":  {ModuleName: "ruby:forwardable", Version: "1.2.0"},
+		"ruby:tracer":       {ModuleName: "ruby:tracer", Version: "0.1.0"},
+		"ruby:io-console":   {ModuleName: "ruby:io-console", Version: "0.4.7"},
+		"ruby:bigdecimal":   {ModuleName: "ruby:bigdecimal", Version: "1.4.1"},
+		"ruby:psych":        {ModuleName: "ruby:psych", Version: "3.1.0"},
+		"ruby:stringio":     {ModuleName: "ruby:stringio", Version: "0.0.2"},
+		"ruby:ipaddr":       {ModuleName: "ruby:ipaddr", Version: "1.2.2"},
+		"ruby:bundler":      {ModuleName: "ruby:bundler", Version: "1.17.2"},
+		"ruby:e2mmap":       {ModuleName: "ruby:e2mmap", Version: "0.1.0"},
+		"ruby:fcntl":        {ModuleName: "ruby:fcntl", Version: "1.0.0"},
+		"ruby:logger":       {ModuleName: "ruby:logger", Version: "1.3.0"},
+		"ruby:mutex_m":      {ModuleName: "ruby:mutex_m", Version: "0.1.0"},
+		"ruby:rss":          {ModuleName: "ruby:rss", Version: "0.2.7"},
+		"ruby:openssl":      {ModuleName: "ruby:openssl", Version: "2.1.2"},
+		"ruby:etc":          {ModuleName: "ruby:etc", Version: "1.0.1"},
+		"ruby:prime":        {ModuleName: "ruby:prime", Version: "0.1.0"},
+		"ruby:gdbm":         {ModuleName: "ruby:gdbm", Version: "2.0.0"},
+		"ruby:cmath":        {ModuleName: "ruby:cmath", Version: "1.0.0"},
+		"ruby:shell":        {ModuleName: "ruby:shell", Version: "0.7"},
+		"ruby:irb":          {ModuleName: "ruby:irb", Version: "1.0.0"},
+		"ruby:webrick":      {ModuleName: "ruby:webrick", Version: "1.4.2"},
+		"ruby:fileutils":    {ModuleName: "ruby:fileutils", Version: "1.1.0"},
+		"ruby:dbm":          {ModuleName: "ruby:dbm", Version: "1.0.0"},
+		"ruby:thwait":       {ModuleName: "ruby:thwait", Version: "0.1.0"},
+		"ruby:sdbm":         {ModuleName: "ruby:sdbm", Version: "1.0.0"},
+		"ruby:json":         {ModuleName: "ruby:json", Version: "2.1.0"},
+		"ruby:rexml":        {ModuleName: "ruby:rexml", Version: "3.1.9"},
+		"ruby:minitest":     {ModuleName: "ruby:minitest", Version: "5.11.3"},
+		"ruby:test-unit":    {ModuleName: "ruby:test-unit", Version: "3.2.9"},
+		"ruby:rake":         {ModuleName: "ruby:rake", Version: "12.3.2"},
+		"ruby:did_you_mean": {ModuleName: "ruby:did_you_mean", Version: "1.3.0"},
+		"ruby:xmlrpc":       {ModuleName: "ruby:xmlrpc", Version: "0.3.0"},
 	}
 	ap := NewScanApps(false)
 	for _, tt := range tests {
@@ -273,5 +275,65 @@ Bundle-ActivationPolicy: lazy
 	pkg, _ = parseJarManifestFile("", r)
 	if pkg.ModuleName != "JNA Development Team:com.sun.jna" && pkg.Version != "5.5.0" {
 		t.Errorf("Wrong jar package: %+v\n", pkg)
+	}
+}
+
+func TestParseDotNetModuleNameVersion(t *testing.T) {
+	tests := []struct {
+		incomingName    string
+		expectedName    string
+		expectedVersion string
+	}{
+		{"Microsoft.AspNetCore.App.Runtime.linux-musl-x64/6.0.15", "Microsoft.AspNetCore.App.Runtime.linux-musl-x64", "6.0.15"},
+		{"Microsoft.NETCore.App.Runtime.linux-musl-x64/6.0.15", "Microsoft.NETCore.App.Runtime.linux-musl-x64", "6.0.15"},
+		{"Microsoft.NETCored5", "", ""},
+	}
+
+	for _, test := range tests {
+		outgoingName, outgoingVersion := splitDotNetModuleNameVersion(test.incomingName)
+		assert.Equal(t, test.expectedName, outgoingName, "Wrong module name")
+		assert.Equal(t, test.expectedVersion, outgoingVersion, "Wrong module version")
+	}
+}
+
+func TestParseDotNetPackage(t *testing.T) {
+	filename := "test.deps.json"
+	fullpath := "/home/test.deps.json"
+	data := dotnetPackage{
+		Runtime: dotnetRuntime{
+			Name:      ".NETCoreApp,Version=v2.2",
+			Signature: "c10e7f708ec2454055c233c695ddc3ac682c23df",
+		},
+		Targets: map[string]map[string]dotnetDependency{
+			".NETCoreApp,Version=v2.2": {
+				"Business.ProfileService/1.0.0": dotnetDependency{
+					Deps: map[string]string{
+						"CorrelationId": "2.1.0",
+						"EasyNetQ":      "3.4.0",
+					},
+				},
+				"Elasticsearch.Net/6.0.0": dotnetDependency{
+					Deps: map[string]string{
+						"CorrelationId": "2.1.0",
+						"EasyNetQ":      "3.4.0",
+					},
+				},
+			},
+		},
+	}
+	expectedResults := map[string]string{
+		".NET:Business.ProfileService": "1.0.0",
+		".NET:CorrelationId":           "2.1.0",
+		".NET:EasyNetQ":                "3.4.0",
+		".NET:Elasticsearch.Net":       "6.0.0",
+	}
+	pkgs := parseDotNetJsonData(filename, fullpath, data)
+	assert.Equal(t, len(expectedResults), len(pkgs), "unexpected number of pkgs")
+
+	for _, pkg := range pkgs {
+		assert.Contains(t, expectedResults, pkg.ModuleName, "unexpected pkg name")
+		if version, ok := expectedResults[pkg.ModuleName]; ok {
+			assert.Equal(t, version, pkg.Version, "ModuleVersion does not match expected version")
+		}
 	}
 }

@@ -22,7 +22,6 @@ import (
 	"github.com/neuvector/neuvector/share/utils"
 )
 
-//
 func isValidKindProcessProfile(kind string) bool {
 	switch kind {
 	case share.GroupKindContainer: // service or user-defined groups
@@ -45,6 +44,8 @@ func replaceFedProcessProfiles(profiles []*share.CLUSProcessProfile) bool {
 	txn := cluster.Transact()
 	defer txn.Close()
 
+	var lastError error
+
 	existing := clusHelper.GetAllProcessProfileSubKeys(share.ScopeFed)
 	for _, profile := range profiles {
 		var pp *share.CLUSProcessProfile
@@ -52,7 +53,10 @@ func replaceFedProcessProfiles(profiles []*share.CLUSProcessProfile) bool {
 			pp = clusHelper.GetProcessProfile(profile.Group)
 		}
 		if pp == nil || !reflect.DeepEqual(profile, pp) {
-			clusHelper.PutProcessProfileTxn(txn, profile.Group, profile)
+			if err := clusHelper.PutProcessProfileTxn(txn, profile.Group, profile); err != nil {
+				lastError = err
+				break
+			}
 		}
 		if existing.Contains(profile.Group) {
 			existing.Remove(profile.Group)
@@ -60,11 +64,20 @@ func replaceFedProcessProfiles(profiles []*share.CLUSProcessProfile) bool {
 	}
 	// delete obsolete file access rule keys
 	for name := range existing.Iter() {
-		clusHelper.DeleteProcessProfileTxn(txn, name.(string))
+		if err := clusHelper.DeleteProcessProfileTxn(txn, name.(string)); err != nil {
+			lastError = err
+			break
+		}
+	}
+
+	if lastError != nil {
+		log.WithFields(log.Fields{"error": lastError}).Error("Atomic write to the cluster failed")
+		return false
 	}
 
 	if ok, err := txn.Apply(); err != nil || !ok {
 		log.WithFields(log.Fields{"ok": ok, "error": err}).Error("Atomic write to the cluster failed")
+		return false
 	}
 
 	return true
@@ -80,7 +93,7 @@ func handlerProcessProfileList(w http.ResponseWriter, r *http.Request, ps httpro
 	}
 
 	query := restParseQuery(r)
-	scope, _ := query.pairs[api.QueryScope] // empty string means fed & local process profiles
+	scope := query.pairs[api.QueryScope] // empty string means fed & local process profiles
 
 	var resp api.RESTProcessProfilesData
 	resp.Profiles = make([]*api.RESTProcessProfile, 0)
@@ -319,7 +332,6 @@ func handlerProcessProfileConfig(w http.ResponseWriter, r *http.Request, ps http
 	deleted := make(map[string]*share.CLUSProcessProfileEntry)
 	if conf.ProcessDelList != nil {
 		for _, proc := range *conf.ProcessDelList {
-			var found bool = false
 			p := &share.CLUSProcessProfileEntry{
 				Name:    proc.Name,
 				Path:    proc.Path,
@@ -374,7 +386,11 @@ func handlerProcessProfileConfig(w http.ResponseWriter, r *http.Request, ps http
 		}
 	}
 
-	clusHelper.PutProcessProfile(group, profile)
+	if err := clusHelper.PutProcessProfile(group, profile); err != nil {
+		restRespErrorMessage(w, http.StatusInternalServerError, api.RESTErrFailWriteCluster, err.Error())
+		return
+	}
+
 	if profile.CfgType == share.FederalCfg {
 		updateFedRulesRevision([]string{share.FedProcessProfilesType}, acc, login)
 	}

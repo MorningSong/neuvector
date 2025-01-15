@@ -50,11 +50,11 @@ type aqlFolder struct {
 	Name string `json:"name"`
 }
 
-type aqlRange struct {
-	Start int `json:"start_pos"`
-	End   int `json:"end_post"`
-	Total int `json:"total"`
-}
+// type aqlRange struct {
+// 	Start int `json:"start_pos"`
+// 	End   int `json:"end_post"`
+// 	Total int `json:"total"`
+// }
 
 type aqlFolderResult struct {
 	Folders []aqlFolder `json:"results"`
@@ -67,8 +67,13 @@ func (r *jfrog) Login(cfg *share.CLUSRegistryConfig) (error, string) {
 		r.subdomainURL = make(map[string]string)
 	}
 
-	r.newRegClient(cfg.Registry, cfg.Username, cfg.Password)
-	r.rc.Alive()
+	if err := r.newRegClient(cfg.Registry, cfg.Username, cfg.Password); err != nil {
+		return err, err.Error()
+	}
+
+	if _, err := r.rc.Alive(); err != nil {
+		return err, err.Error()
+	}
 	return nil, ""
 }
 
@@ -115,7 +120,7 @@ func (r *jfrog) getSubdomainRepoList(jdirs []jfrogDir, org, name string, limit i
 				if !strings.Contains(name, "*") {
 					// although repo has no wildcard, we need wait until here so we have the correct subdomain URL
 					r.subdomainURL[dir.Key] = newURL
-					return []*share.CLUSImage{&share.CLUSImage{
+					return []*share.CLUSImage{{
 						RegMod: newURL, Repo: fmt.Sprintf("%s/%s", org, name),
 					}}, nil
 				}
@@ -172,9 +177,9 @@ func (r *jfrog) GetRepoList(org, name string, limit int) ([]*share.CLUSImage, er
 
 	if !strings.Contains(name, "*") {
 		if org == "" {
-			return []*share.CLUSImage{&share.CLUSImage{Repo: name}}, nil
+			return []*share.CLUSImage{{Repo: name}}, nil
 		} else {
-			return []*share.CLUSImage{&share.CLUSImage{Repo: fmt.Sprintf("%s/%s", org, name)}}, nil
+			return []*share.CLUSImage{{Repo: fmt.Sprintf("%s/%s", org, name)}}, nil
 		}
 	}
 	dirs := make([]jfrogRepo, 0)
@@ -211,6 +216,21 @@ func getSubdomainFromRepo(repo string) (string, string) {
 	return "", ""
 }
 
+// GetArtifactoryTags is designed to work with a new API endpoint provided by JFrog.
+func (r *jfrog) GetArtifactoryTags(repositoryStr string, rc *scanUtils.RegClient) ([]string, error) {
+	tags := make([]string, 0)
+	key, repository, found := strings.Cut(repositoryStr, "/")
+	if !found {
+		return tags, fmt.Errorf("invalid repository format: %v", repositoryStr)
+	}
+
+	url, err := r.url("/artifactory/api/docker/%s/v2/%s/tags/list", key, repository)
+	if err != nil {
+		return nil, err
+	}
+	return rc.FetchTagsPaginated(url, repositoryStr)
+}
+
 func (r *jfrog) GetTagList(domain, repo, tag string) ([]string, error) {
 	smd.scanLog.Debug()
 
@@ -227,6 +247,14 @@ func (r *jfrog) GetTagList(domain, repo, tag string) ([]string, error) {
 		}
 		repo = subRepo
 	}
+
+	// GetArtifactoryTags fetches tags fetch tags using the Artifactory API (introduced in JFrog 4.4.3)
+	if tags, err := r.GetArtifactoryTags(repo, rc); len(tags) > 0 || err != nil {
+		return tags, err
+	}
+
+	// Fallback to the original `Tags` API if the Artifactory API fails or returns no tags
+	smd.scanLog.WithFields(log.Fields{"repo": repo}).Debug("Falling back to rc.Tags API")
 	return rc.Tags(repo)
 }
 
@@ -239,7 +267,11 @@ func (r *jfrog) GetAllImages() (map[share.CLUSImage][]string, error) {
 
 	r.isSubdomain = true
 
-	aqlUrl := r.url("artifactory/api/search/aql")
+	aqlUrl, err := r.url("artifactory/api/search/aql")
+	if err != nil {
+		return nil, err
+	}
+
 	aql := `items.find({"repo":{"$match":"*"},"type":"folder"}).include("repo","path","name").sort({"$desc":["repo","path","name"]})`
 
 	var resp *http.Response
@@ -370,7 +402,10 @@ func (r *jfrog) ScanImage(scanner string, ctx context.Context, id, digest, repo,
 }
 
 func (r *jfrog) getJFrogDirUrl() ([]jfrogDir, error) {
-	repoUrl := r.url("artifactory/api/repositories")
+	repoUrl, err := r.url("artifactory/api/repositories")
+	if err != nil {
+		return nil, err
+	}
 	smd.scanLog.WithFields(log.Fields{"url": repoUrl}).Debug()
 
 	resp, err := r.rc.Client.Get(repoUrl)
